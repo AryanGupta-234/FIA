@@ -37,8 +37,9 @@ class PageFetcher:
                    "Accept": "text/html,application/xhtml+xml"}
         try:
             async with httpx.AsyncClient(timeout=self.settings.crawl_timeout_seconds,
-                                         follow_redirects=False) as client:
-                async with client.stream("GET", url, headers=headers) as response:
+                                         follow_redirects=False) as client, client.stream(
+                "GET", url, headers=headers
+            ) as response:
                     if response.status_code in (301, 302, 303, 307, 308):
                         return None, "Redirect skipped; destination must be independently validated"
                     if response.status_code != 200:
