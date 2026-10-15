@@ -94,7 +94,7 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             retailer.evidence_notes = "; ".join(evidence["reasons"])
         job.status = "completed"
         job.result_count = len(ordered)
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         db.commit()
     except (RuntimeError, ValueError, OSError) as exc:
         db.rollback()
