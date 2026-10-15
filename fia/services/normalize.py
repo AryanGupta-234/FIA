@@ -2,7 +2,7 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 TRACKING_KEYS = {"gclid", "fbclid", "mc_cid", "mc_eid"}
-PRICE_RE = re.compile(r"(?:₹|INR|Rs\.?\s*)\s*([\d,]+(?:\.\d{1,2})?)", re.I)
+PRICE_RE = re.compile(r"(?:₹|INR|Rs\.?\s*)\s*([\d,]+(?:\.\d{1,2})?)", re.IGNORECASE)
 
 
 def canonicalize_url(url: str) -> str:
