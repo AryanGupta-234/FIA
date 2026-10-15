@@ -1,6 +1,6 @@
 import json
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -113,7 +113,7 @@ def update_preferences(payload: PreferenceUpdate):
         row.sizes = json.dumps(payload.sizes)
         row.style_notes = payload.style_notes
         row.budget_default = payload.budget_default
-        row.updated_at = datetime.now(timezone.utc)
+        row.updated_at = datetime.now(UTC)
         db.add(row)
         db.commit()
     return {"status": "saved"}
