@@ -1,5 +1,5 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker\nfrom pathlib import Path
 
 from fia.config import get_settings
 
@@ -13,7 +13,7 @@ def build_engine():
     if settings.database_url.startswith("sqlite"):
         path = settings.database_path
         if path:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
         return create_engine(settings.database_url, connect_args={"check_same_thread": False})
     return create_engine(settings.database_url, pool_pre_ping=True)
 
