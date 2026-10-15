@@ -1,5 +1,7 @@
+from pathlib import Path
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker\nfrom pathlib import Path
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from fia.config import get_settings
 
