@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -76,7 +76,7 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             row.evidence_json = __import__("json").dumps(
                 {"trust_score": item["trust_score"], "trust_label": item["trust_label"],
                  "reasons": item["reasons"]})
-            row.last_seen = datetime.now(timezone.utc)
+            row.last_seen = datetime.now(UTC)
             db.flush()
             if row.price is not None and row.price > 0:
                 db.add(PriceObservation(product_id=row.id, price=row.price,
@@ -96,7 +96,7 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
         job.result_count = len(ordered)
         job.completed_at = datetime.now(timezone.utc)
         db.commit()
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         db.rollback()
         job = db.get(ResearchJob, job_id)
         if job:
