@@ -16,8 +16,8 @@ export default function App() {
    const response=await fetch(API+"/api/v1/research",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query,budget_max:budget?Number(budget):null,category,limit:25,fetch_product_pages:true})});
    if(!response.ok)throw new Error((await response.text()).slice(0,300));
    const accepted=await response.json();let current:Job|null=null;
-   for(let i=0;i<40;i++){await new Promise(resolve=>setTimeout(resolve,700));const result=await fetch(API+"/api/v1/research/"+accepted.job_id);current=await result.json();setJob(current);if(["completed","failed"].includes(current.status))break;}
-   if(current && current.status==="failed")setError(current.error||"Research failed");
+   for(let i=0;i<40;i++){await new Promise(resolve=>setTimeout(resolve,700));const result=await fetch(API+"/api/v1/research/"+accepted.job_id);const next:Job=await result.json();current=next;setJob(next);if(["completed","failed"].includes(next.status))break;}
+   if(current?.status==="failed")setError(current.error||"Research failed");
   }catch(err){setError(err instanceof Error?err.message:"Unable to contact FIA API");}
   finally{setBusy(false);}
  }
