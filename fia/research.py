@@ -102,7 +102,7 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
         if job:
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {str(exc)[:400]}"
-            job.completed_at = datetime.now(timezone.utc)
+            job.completed_at = datetime.now(UTC)
             db.commit()
     finally:
         db.close()
