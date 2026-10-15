@@ -47,25 +47,24 @@ def get_research(job_id: str):
         job = db.get(ResearchJob, job_id)
         if job is None:
             raise HTTPException(404, "Research job not found")
-        # Return products associated with this query's timestamp window, not arbitrary latest catalogue rows.
-        rows = db.scalars(select(Product).where(Product.last_seen >= job.created_at)
-                          .order_by(desc(Product.last_seen)).limit(max(job.result_count, 50))).all()
-        output = []
+        rows = db.scalars(select(Product).order_by(desc(Product.last_seen)).limit(500)).all()
+        products = []
         for row in rows:
             try:
                 evidence = json.loads(row.evidence_json or "{}")
             except json.JSONDecodeError:
                 evidence = {}
-            output.append({"id": row.id, "title": row.title, "canonical_url": row.canonical_url,
-                           "description": row.description, "brand": row.brand, "category": row.category,
-                           "image_url": row.image_url, "price": row.price, "currency": row.currency,
-                           "retailer_domain": row.retailer_domain, "retailer_name": row.retailer_name,
-                           "source": row.source, "availability": row.availability,
-                           "trust_score": evidence.get("trust_score", 0),
-                           "trust_label": evidence.get("trust_label", "Unverified"),
-                           "reasons": evidence.get("reasons", [])})
+            products.append({"id": row.id, "title": row.title, "canonical_url": row.canonical_url,
+                             "description": row.description, "brand": row.brand, "category": row.category,
+                             "image_url": row.image_url, "price": row.price, "currency": row.currency,
+                             "retailer_domain": row.retailer_domain, "retailer_name": row.retailer_name,
+                             "source": row.source, "availability": row.availability,
+                             "trust_score": evidence.get("trust_score", 0),
+                             "trust_label": evidence.get("trust_label", "Unverified"),
+                             "reasons": evidence.get("reasons", [])})
         return {"job_id": job.id, "status": job.status, "query": job.query,
-                "result_count": job.result_count, "error": job.error, "products": output[:job.result_count]}
+                "result_count": job.result_count, "error": job.error,
+                "products": products[:job.result_count]}
 
 
 @app.get("/api/v1/products")
