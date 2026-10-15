@@ -1,6 +1,6 @@
-import uvicorn
-
 from fia.config import get_settings
+
+import uvicorn
 
 
 if __name__ == "__main__":
