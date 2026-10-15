@@ -10,9 +10,9 @@ class ResearchRequest(BaseModel):
 
 
 class PreferenceUpdate(BaseModel):
-    preferred_categories: list[str] = []
-    preferred_brands: list[str] = []
-    preferred_colours: list[str] = []
-    sizes: dict[str, str] = {}
+    preferred_categories: list[str] = Field(default_factory=list)
+    preferred_brands: list[str] = Field(default_factory=list)
+    preferred_colours: list[str] = Field(default_factory=list)
+    sizes: dict[str, str] = Field(default_factory=dict)
     style_notes: str = Field(default="", max_length=2000)
     budget_default: float | None = Field(default=None, gt=0, le=10_000_000)
