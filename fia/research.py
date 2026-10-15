@@ -1,4 +1,5 @@
 import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
 
@@ -25,13 +26,12 @@ def create_job(db, query: str, budget_max: float | None, category: str | None) -
 
 async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
     db = SessionLocal()
-    job = db.get(ResearchJob, job_id)
-    if job is None:
-        db.close()
-        return
-    job.status = "running"
-    db.commit()
     try:
+        job = db.get(ResearchJob, job_id)
+        if job is None:
+            return
+        job.status = "running"
+        db.commit()
         settings = get_settings()
         results = await get_search_provider().search(job.query, limit)
         fetcher = PageFetcher()
@@ -54,8 +54,7 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
                     parsed = extract_product(html, canonical)
                     if parsed:
                         item.update({key: value for key, value in parsed.items() if value not in (None, "")})
-            item = rank_product(item, job.query, job.budget_max)
-            products[canonical] = item
+            products[canonical] = rank_product(item, job.query, job.budget_max)
         ordered = sorted(products.values(),
                          key=lambda item: (item["relevance_score"], item["trust_score"]), reverse=True)
         for item in ordered:
@@ -73,7 +72,7 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             row.currency = item.get("currency") or "INR"
             row.availability = item.get("availability")
             row.retailer_name = item.get("retailer_name")
-            row.evidence_json = __import__("json").dumps(
+            row.evidence_json = json.dumps(
                 {"trust_score": item["trust_score"], "trust_label": item["trust_label"],
                  "reasons": item["reasons"]})
             row.last_seen = datetime.now(UTC)
@@ -96,10 +95,10 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
         job.result_count = len(ordered)
         job.completed_at = datetime.now(UTC)
         db.commit()
-    except (RuntimeError, ValueError, OSError) as exc:
+    except Exception as exc:
         db.rollback()
         job = db.get(ResearchJob, job_id)
-        if job:
+        if job is not None:
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {str(exc)[:400]}"
             job.completed_at = datetime.now(UTC)
