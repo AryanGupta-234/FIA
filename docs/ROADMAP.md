@@ -15,7 +15,8 @@
 - [ ] Additional retailer-approved product feeds and affiliate/catalog APIs
 - [ ] Coupon validity and shipping/return detail adapters
 - [ ] Seller-level marketplace evidence where the source exposes seller IDs
-- [ ] Price freshness expiry, stale badges and alert thresholds
+- [x] In-app price-drop alerts for saved products when a lower same-currency price is observed
+- [ ] Price freshness expiry, stale badges and configurable alert thresholds
 - [ ] Product/SKU entity resolution across stores
 
 ## v0.4 — Fashion intelligence

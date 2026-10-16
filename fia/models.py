@@ -82,6 +82,21 @@ class ResearchResult(Base):
     reasons_json: Mapped[str] = mapped_column(Text, default="[]")
 
 
+class PriceAlert(Base):
+    __tablename__ = "price_alerts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    previous_price: Mapped[float] = mapped_column(Float)
+    current_price: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3), default="INR")
+    drop_percent: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    product: Mapped[Product] = relationship()
+
+
 class RetailerEvidence(Base):
     __tablename__ = "retailer_evidence"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

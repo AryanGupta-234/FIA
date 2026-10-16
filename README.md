@@ -9,6 +9,7 @@ An India-first fashion research workspace. Describe what you want, and FIA searc
 - India-scoped Brave Search integration for web listings and image search.
 - Product-page extraction for JSON-LD Product/Offer, images, prices, availability and seller details.
 - Offer evidence: current/original price, discount percentage and timestamped price observations when exposed by the source.
+- In-app price-drop alerts for saved products when a later refresh confirms a lower same-currency price.
 - Retailer-domain evidence with transparent reasons and no blanket authenticity claims.
 - Research history, saved products, style preferences and opt-in saved-search monitoring.
 - React + Vite workspace with an animated first-run boot screen, dashboard, discover, offers, saved pieces and history views.
@@ -35,6 +36,7 @@ See .env.example. The Brave API key is supplied by the user and must not be comm
 - POST /api/v1/research and GET /api/v1/research/{job_id}
 - GET /api/v1/products, GET /api/v1/products/{product_id}
 - GET /api/v1/offers, GET /api/v1/history
+- GET /api/v1/alerts, POST /api/v1/alerts/{id}/read
 - GET/POST /api/v1/saved-searches, PUT/DELETE /api/v1/saved-searches/{id}
 - POST /api/v1/saved-searches/{id}/refresh
 - GET /api/v1/saved-products, POST/DELETE /api/v1/saved-products/{product_id}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
-  Activity, ArrowDownRight, ArrowRight, ArrowUpRight, Bookmark, BookmarkCheck,
+  Activity, ArrowDownRight, ArrowRight, Bell, ArrowUpRight, Bookmark, BookmarkCheck,
   Check, ChevronRight, CircleDollarSign, Clock3, Compass, Crown, ExternalLink,
   Eye, Filter, Heart, History, LayoutDashboard, LoaderCircle, LockKeyhole,
   Menu, PackageSearch, Plus, Radar, RefreshCw, Search, Settings2, ShieldCheck,
@@ -72,6 +72,21 @@ type Stats = {
   offers: number;
   saved_products: number;
   saved_searches: number;
+  price_alerts_unread: number;
+};
+
+type PriceAlert = {
+  id: number;
+  product_id: number;
+  title: string;
+  image_url?: string | null;
+  canonical_url: string;
+  previous_price: number;
+  current_price: number;
+  currency: string;
+  drop_percent: number;
+  created_at?: string | null;
+  read_at?: string | null;
 };
 
 type Health = {
@@ -91,10 +106,10 @@ type Preferences = {
   budget_default: number | null;
 };
 
-type View = "overview" | "discover" | "offers" | "saved" | "history" | "profile";
+type View = "overview" | "discover" | "offers" | "alerts" | "saved" | "history" | "profile";
 
 const EMPTY_STATS: Stats = {
-  products: 0, research_jobs: 0, completed_jobs: 0, offers: 0, saved_products: 0, saved_searches: 0,
+  products: 0, research_jobs: 0, completed_jobs: 0, offers: 0, saved_products: 0, saved_searches: 0, price_alerts_unread: 0,
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -246,6 +261,7 @@ export default function App() {
   const [savedProducts, setSavedProducts] = useState<Product[]>([]);
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [alerts, setAlerts] = useState<PriceAlert[]>([]);
   const [preferences, setPreferences] = useState<Preferences>({
     preferred_categories: [], preferred_brands: [], preferred_colours: [],
     sizes: {}, style_notes: "", budget_default: null,
@@ -267,7 +283,7 @@ export default function App() {
   const loadWorkspace = useCallback(async () => {
     setLoading(true);
     try {
-      const [h, s, o, saved, searches, recent, prefs] = await Promise.all([
+      const [h, s, o, saved, searches, recent, prefs, priceAlerts] = await Promise.all([
         api<Health>("/api/v1/health"),
         api<Stats>("/api/v1/stats"),
         api<Product[]>("/api/v1/offers?limit=12"),
@@ -275,9 +291,10 @@ export default function App() {
         api<SavedSearch[]>("/api/v1/saved-searches"),
         api<HistoryItem[]>("/api/v1/history?limit=12"),
         api<Preferences>("/api/v1/preferences"),
+        api<PriceAlert[]>("/api/v1/alerts?limit=50"),
       ]);
       setHealth(h); setStats(s); setOffers(o); setSavedProducts(saved);
-      setSavedSearches(searches); setHistory(recent); setPreferences(prefs);
+      setSavedSearches(searches); setHistory(recent); setPreferences(prefs); setAlerts(priceAlerts);
       setPrefBrands(prefs.preferred_brands.join(", "));
       setPrefColours(prefs.preferred_colours.join(", "));
       setPrefCategories(prefs.preferred_categories.join(", "));
@@ -371,6 +388,13 @@ export default function App() {
     } catch (err) { setError(err instanceof Error ? err.message : "Could not update watch"); }
   }
 
+  async function markAlertRead(alert: PriceAlert) {
+    try {
+      await api("/api/v1/alerts/" + alert.id + "/read", { method: "POST" });
+      await loadWorkspace();
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not update alert"); }
+  }
+
   async function savePreferences(event: FormEvent) {
     event.preventDefault();
     try {
@@ -398,6 +422,7 @@ export default function App() {
     { id: "overview" as View, label: "Overview", icon: LayoutDashboard },
     { id: "discover" as View, label: "Discover", icon: Compass },
     { id: "offers" as View, label: "Live offers", icon: Tag, count: stats.offers },
+    { id: "alerts" as View, label: "Price-drop alerts", icon: Bell, count: stats.price_alerts_unread },
     { id: "saved" as View, label: "Saved pieces", icon: Heart, count: stats.saved_products },
     { id: "history" as View, label: "Research history", icon: History },
     { id: "profile" as View, label: "Style profile", icon: SlidersHorizontal },
@@ -558,6 +583,28 @@ export default function App() {
               <div><strong>No structured discounts found yet</strong><p>When retailers expose original price and current offer information on accessible product pages, FIA will surface the difference here.</p></div>
               <button className="primary-button" onClick={() => setView("discover")}>Research a product <ArrowRight size={15} /></button></div>}
           <p className="disclaimer-line"><ShieldCheck size={13} /> Prices and availability can change. Always confirm on the retailer site before buying.</p>
+        </>}
+
+        {view === "alerts" && <>
+          <section className="page-heading"><div><span className="section-kicker">YOUR SAVED-PIECE SIGNALS</span>
+            <h1>Price drops, <em>delivered.</em></h1>
+            <p>FIA alerts you when a refreshed listing confirms a lower price for a product you saved.</p></div>
+            <button className="secondary-button" onClick={() => void loadWorkspace()}><RefreshCw size={15} /> Sync alerts</button></section>
+          <div className="price-alert-list">
+            {alerts.length ? alerts.map(alert => <article className={"price-alert-card" + (alert.read_at ? "" : " unread")} key={alert.id}>
+              <div className="price-alert-symbol"><TrendingDown size={19} /></div>
+              <div className="price-alert-copy"><span>PRICE DROP · {alert.drop_percent}% LOWER</span><h3>{alert.title}</h3>
+                <p>{money(alert.previous_price, alert.currency)} <ArrowRight size={13} /> <strong>{money(alert.current_price, alert.currency)}</strong></p>
+                <a href={alert.canonical_url} target="_blank" rel="noreferrer">Check retailer listing <ExternalLink size={13} /></a>
+              </div>
+              <div className="price-alert-meta"><strong>{money(alert.current_price, alert.currency)}</strong><small>{relativeTime(alert.created_at)}</small>
+                {!alert.read_at && <button className="secondary-button small-button" onClick={() => void markAlertRead(alert)}>Mark read</button>}
+                {alert.read_at && <small className="alert-read-label"><Check size={12} /> Read</small>}
+              </div>
+            </article>) : <div className="empty-panel large-empty"><div className="empty-icon"><Bell size={23} /></div>
+              <div><strong>No price-drop alerts yet</strong><p>Save a product and keep an active search watch running. FIA will add an alert here when a lower price is observed.</p></div>
+              <button className="primary-button" onClick={() => setView("saved")}>View saved pieces <ArrowRight size={15} /></button></div>}
+          </div>
         </>}
 
         {view === "saved" && <>

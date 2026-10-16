@@ -11,6 +11,7 @@ from fia.automation import auto_refresh_loop
 from fia.config import get_settings
 from fia.db import SessionLocal, init_db
 from fia.models import (
+    PriceAlert,
     PriceObservation,
     Product,
     ResearchJob,
@@ -212,6 +213,51 @@ def list_offers(limit: int = Query(60, ge=1, le=200), q: str | None = None):
             statement.order_by(desc(Product.discount_percent), desc(Product.last_seen)).limit(limit)
         ).all()
         return [_product_payload(row) for row in rows]
+
+
+@app.get("/api/v1/alerts")
+def list_alerts(
+    limit: int = Query(50, ge=1, le=200),
+    unread_only: bool = False,
+):
+    with SessionLocal() as db:
+        statement = (
+            select(PriceAlert, Product)
+            .join(Product, Product.id == PriceAlert.product_id)
+        )
+        if unread_only:
+            statement = statement.where(PriceAlert.read_at.is_(None))
+        rows = db.execute(
+            statement.order_by(desc(PriceAlert.created_at), desc(PriceAlert.id)).limit(limit)
+        ).all()
+        return [
+            {
+                "id": alert.id,
+                "product_id": product.id,
+                "title": product.title,
+                "image_url": product.image_url,
+                "canonical_url": product.canonical_url,
+                "previous_price": alert.previous_price,
+                "current_price": alert.current_price,
+                "currency": alert.currency,
+                "drop_percent": alert.drop_percent,
+                "created_at": alert.created_at.isoformat() if alert.created_at else None,
+                "read_at": alert.read_at.isoformat() if alert.read_at else None,
+            }
+            for alert, product in rows
+        ]
+
+
+@app.post("/api/v1/alerts/{alert_id}/read")
+def mark_alert_read(alert_id: int):
+    with SessionLocal() as db:
+        alert = db.get(PriceAlert, alert_id)
+        if alert is None:
+            raise HTTPException(404, "Price alert not found")
+        if alert.read_at is None:
+            alert.read_at = datetime.now(UTC)
+            db.commit()
+    return {"status": "read"}
 
 
 @app.get("/api/v1/retailers")
@@ -425,4 +471,7 @@ def stats():
             ) or 0,
             "saved_products": db.scalar(select(func.count(SavedProduct.id))) or 0,
             "saved_searches": db.scalar(select(func.count(SavedSearch.id))) or 0,
+            "price_alerts_unread": db.scalar(
+                select(func.count(PriceAlert.id)).where(PriceAlert.read_at.is_(None))
+            ) or 0,
         }

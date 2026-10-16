@@ -7,3 +7,41 @@
 @media(max-width:980px){.sidebar{width:225px}.main-panel{margin-left:225px}.hero-search{grid-template-columns:1fr}.hero-copy p{max-width:490px}.hero-copy h2 br{display:none}.hero-controls{max-width:700px}.product-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.bottom-grid{grid-template-columns:1fr}.profile-layout{grid-template-columns:1fr}.profile-side{display:grid;grid-template-columns:1fr 1fr}}
 @media(max-width:720px){.sidebar{transform:translateX(-102%);transition:transform .23s ease;width:265px;box-shadow:20px 0 60px #0008}.sidebar.mobile-open{transform:translateX(0)}.mobile-shade.show{display:block;position:fixed;z-index:25;inset:0;background:#05070dbb;backdrop-filter:blur(3px)}.close-nav,.mobile-menu{display:grid}.main-panel{margin-left:0}.topbar{height:58px;padding:0 16px}.topbar-right{gap:8px}.page-content{padding:24px 16px 18px}.welcome-row{align-items:flex-start;flex-direction:column}.welcome-row h1,.page-heading h1{font-size:32px}.date-chip{margin:0}.hero-search{padding:19px 15px;gap:17px}.hero-copy h2{font-size:27px}.hero-controls{flex-wrap:wrap}.mini-field{flex:1}.mini-field>div,.mini-field select{width:100%}.mini-field input{width:100%}.hero-controls>.primary-button{width:100%;margin-top:2px}.stats-grid{gap:8px}.stat-card{padding:12px;min-height:110px}.stat-value{font-size:22px}.product-grid,.results-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.product-visual{height:140px}.compact-card .product-visual{height:125px}.product-info{padding:9px}.product-info h3{font-size:10px}.product-price-row strong{font-size:12px}.product-overline{font-size:7px}.trust-indicator{font-size:6px}.page-heading{align-items:flex-start}.page-heading>.secondary-button{align-self:center}.console-bottom{display:grid;grid-template-columns:1fr 1fr}.console-bottom label{min-width:0}.console-bottom select,.input-shell{width:100%}.console-bottom .primary-button,.console-bottom .secondary-button{width:100%}.history-head{display:none}.history-row{grid-template-columns:1fr auto;gap:7px}.history-row>span:nth-child(3),.history-row>span:nth-child(4){display:none}.saved-search-row{flex-wrap:wrap}.saved-search-copy{min-width:calc(100% - 60px)}.watch-state{margin-left:45px}.profile-side{grid-template-columns:1fr}.app-footer{align-items:flex-start;flex-direction:column;gap:9px}.app-footer>span:last-child{flex-wrap:wrap}.connection-pill{font-size:7px;padding:6px 7px}.refresh-button{width:29px}.top-avatar{width:27px;height:27px}}
 @media(max-width:420px){.product-grid,.results-grid{grid-template-columns:1fr 1fr}.product-visual{height:118px}.product-meta-row{font-size:7px}.trust-indicator{max-width:85px;overflow:hidden;text-overflow:ellipsis}.stat-label{font-size:7px}.stat-caption{font-size:8px}.boot-card{padding:22px 18px}.boot-title{font-size:23px}}
+
+
+.price-alert-list { display: grid; gap: 12px; }
+.price-alert-card {
+  display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center;
+  gap: 18px; padding: 20px 22px; border: 1px solid var(--line, rgba(255,255,255,.09));
+  border-radius: 18px; background: rgba(255,255,255,.035);
+}
+.price-alert-card.unread {
+  border-color: rgba(167,139,250,.34);
+  background: linear-gradient(110deg, rgba(139,92,246,.105), rgba(255,255,255,.025));
+}
+.price-alert-symbol {
+  display: grid; width: 46px; height: 46px; place-items: center; border-radius: 14px;
+  color: #86efac; background: rgba(34,197,94,.12);
+}
+.price-alert-copy { min-width: 0; }
+.price-alert-copy > span { color: #a78bfa; font-size: 10px; font-weight: 750; letter-spacing: .12em; }
+.price-alert-copy h3 { margin: 5px 0 7px; color: var(--text, #f5f3ff); font-size: 15px; font-weight: 650; }
+.price-alert-copy p {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 8px;
+  color: var(--muted, #a1a1aa); font-size: 13px;
+}
+.price-alert-copy p strong { color: #86efac; }
+.price-alert-copy a {
+  display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #a1a1aa);
+  font-size: 12px; text-decoration: none;
+}
+.price-alert-copy a:hover { color: var(--text, #fff); }
+.price-alert-meta { display: flex; min-width: 132px; align-items: flex-end; flex-direction: column; gap: 6px; }
+.price-alert-meta > strong { color: var(--text, #fff); font-size: 16px; }
+.price-alert-meta > small, .alert-read-label { color: var(--muted, #a1a1aa); font-size: 11px; }
+.alert-read-label { display: inline-flex; align-items: center; gap: 4px; }
+@media (max-width: 640px) {
+  .price-alert-card { grid-template-columns: 38px minmax(0, 1fr); gap: 12px; padding: 15px; }
+  .price-alert-symbol { width: 38px; height: 38px; }
+  .price-alert-meta { grid-column: 2; min-width: 0; align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
+}

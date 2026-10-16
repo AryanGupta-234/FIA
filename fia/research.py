@@ -11,13 +11,16 @@ from fia.crawling.fetcher import PageFetcher
 from fia.db import SessionLocal
 from fia.discovery.factory import get_search_provider
 from fia.models import (
+    PriceAlert,
     PriceObservation,
     Product,
     ResearchJob,
     ResearchResult,
     RetailerEvidence,
+    SavedProduct,
 )
 from fia.services.normalize import canonicalize_url
+from fia.services.offers import apply_price_evidence
 from fia.services.ranking import rank_product
 from fia.services.trust import assess_url
 
@@ -118,6 +121,14 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
         for item in ordered:
             row = db.scalar(select(Product).where(Product.canonical_url == item["canonical_url"]))
             previous_price = row.price if row is not None else None
+            previous_currency = row.currency if row is not None else "INR"
+            previous_snapshot = (
+                row.price,
+                row.original_price,
+                row.discount_percent,
+                row.currency,
+                row.availability,
+            ) if row is not None else None
             if row is None:
                 row = Product(
                     canonical_url=item["canonical_url"],
@@ -132,21 +143,8 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             row.category = job.category or row.category
             row.image_url = item.get("image_url") or row.image_url
             row.image_source = item.get("image_source") or row.image_source
-            row.price = item.get("price") if item.get("price") is not None else row.price
-            row.original_price = item.get("original_price") or row.original_price
-            row.discount_percent = item.get("discount_percent") or row.discount_percent
-            if (
-                row.discount_percent is None
-                and row.price
-                and row.original_price
-                and row.original_price > row.price
-            ): 
-                row.discount_percent = round((1 - row.price / row.original_price) * 100, 1)
-            row.currency = item.get("currency") or row.currency or "INR"
-            row.availability = item.get("availability") or row.availability
+            has_price_evidence = apply_price_evidence(row, item)
             row.seller_name = item.get("seller_name") or row.seller_name
-            row.offer_label = item.get("offer_label") or row.offer_label
-            row.offer_valid_until = item.get("offer_valid_until") or row.offer_valid_until
             row.retailer_name = item.get("retailer_name") or row.retailer_name
             row.source = item["source"]
             row.evidence_json = json.dumps(
@@ -159,10 +157,18 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             row.last_seen = datetime.now(UTC)
             db.flush()
 
+            current_snapshot = (
+                row.price,
+                row.original_price,
+                row.discount_percent,
+                row.currency,
+                row.availability,
+            )
             if (
-                row.price is not None
-                and (previous_price is None or abs(previous_price - row.price) > 0.01)
-            ): 
+                has_price_evidence
+                and row.price is not None
+                and current_snapshot != previous_snapshot
+            ):
                 db.add(
                     PriceObservation(
                         product_id=row.id,
@@ -172,6 +178,26 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
                         currency=row.currency,
                         availability=row.availability,
                         source=row.source,
+                    )
+                )
+
+            if (
+                previous_price is not None
+                and row.price is not None
+                and previous_currency == row.currency
+                and previous_price - row.price > 0.01
+                and db.scalar(
+                    select(SavedProduct.id).where(SavedProduct.product_id == row.id)
+                ) is not None
+            ):
+                drop_percent = round((previous_price - row.price) / previous_price * 100, 1)
+                db.add(
+                    PriceAlert(
+                        product_id=row.id,
+                        previous_price=previous_price,
+                        current_price=row.price,
+                        currency=row.currency,
+                        drop_percent=drop_percent,
                     )
                 )
             evidence = assess_url(item["canonical_url"])
