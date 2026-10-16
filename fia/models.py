@@ -56,7 +56,9 @@ class Product(Base):
     evidence_json: Mapped[str] = mapped_column(Text, default="{}")
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    price_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    price_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     observations: Mapped[list["PriceObservation"]] = relationship(
         back_populates="product", cascade="all, delete-orphan"
     )

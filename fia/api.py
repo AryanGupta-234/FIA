@@ -247,7 +247,9 @@ def list_offers(
         if q:
             statement = statement.where(Product.title.ilike(f"%{q[:100]}%"))
         rows = db.scalars(
-            statement.order_by(desc(Product.discount_percent), desc(Product.price_checked_at)).limit(limit)
+            statement.order_by(
+                desc(Product.discount_percent), desc(Product.price_checked_at)
+            ).limit(limit)
         ).all()
         return [_product_payload(row) for row in rows]
 
