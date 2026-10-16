@@ -16,3 +16,13 @@ class PreferenceUpdate(BaseModel):
     sizes: dict[str, str] = Field(default_factory=dict)
     style_notes: str = Field(default="", max_length=2000)
     budget_default: float | None = Field(default=None, gt=0, le=10_000_000)
+
+
+class SavedSearchCreate(BaseModel):
+    query: str = Field(min_length=2, max_length=500)
+    budget_max: float | None = Field(default=None, gt=0, le=10_000_000)
+    category: str | None = Field(default=None, max_length=80)
+
+
+class SavedSearchUpdate(BaseModel):
+    active: bool

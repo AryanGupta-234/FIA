@@ -7,3 +7,9 @@ def test_health(client):
 def test_research_validation(client):
     response = client.post("/api/v1/research", json={"query": "x"})
     assert response.status_code == 422
+
+
+def test_products_offers_and_history_routes(client):
+    assert client.get("/api/v1/products").status_code == 200
+    assert client.get("/api/v1/offers").status_code == 200
+    assert client.get("/api/v1/history").status_code == 200

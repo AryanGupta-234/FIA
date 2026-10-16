@@ -6,7 +6,8 @@ import httpx
 
 class RobotsPolicy:
     def __init__(self, user_agent: str, timeout: float = 5.0):
-        self.user_agent, self.timeout = user_agent, timeout
+        self.user_agent = user_agent
+        self.timeout = timeout
         self.cache: dict[str, RobotFileParser | None] = {}
 
     async def allowed(self, url: str) -> tuple[bool, str]:
@@ -19,16 +20,17 @@ class RobotsPolicy:
             parser.set_url(origin + "/robots.txt")
             try:
                 async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
-                    response = await client.get(origin + "/robots.txt",
-                                                headers={"User-Agent": self.user_agent})
+                    response = await client.get(
+                        origin + "/robots.txt", headers={"User-Agent": self.user_agent}
+                    )
                 if response.status_code == 200:
                     parser.parse(response.text.splitlines())
                     self.cache[origin] = parser
-                elif response.status_code in (401, 403):
-                    self.cache[origin] = None
-                else:
+                elif response.status_code in (404, 410):
                     parser.parse([])
                     self.cache[origin] = parser
+                else:
+                    self.cache[origin] = None
             except httpx.HTTPError:
                 self.cache[origin] = None
         parser = self.cache[origin]

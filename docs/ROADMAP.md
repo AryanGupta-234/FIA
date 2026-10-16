@@ -1,38 +1,35 @@
-# Roadmap
+# FIA Roadmap
 
-## v0.1 Foundation
-- [x] Standalone project, architecture and research-only boundary
-- [x] FastAPI, SQLAlchemy persistence and local demo mode
-- [x] Optional Brave Search provider
-- [x] Robots-aware bounded page fetch and JSON-LD extraction
-- [x] URL deduplication, lexical relevance, budget fit and trust evidence
-- [x] React dashboard, Windows scripts, Docker and CI
+## v0.2 — Research workspace
+- [x] Remove Docker-based setup; Windows-first PowerShell launch
+- [x] First-run boot screen and Windows Start Menu shortcut installer
+- [x] Responsive research dashboard, offer radar, saved items and history
+- [x] Brave India web discovery and image search fallback
+- [x] Retailer JSON-LD Product/Offer extraction
+- [x] Discount evidence and price-change observations
+- [x] Opt-in saved-search refresh scheduler
+- [x] Research result provenance and seller/domain evidence
+- [x] Additive local SQLite column migration
 
-## v0.2 Discovery breadth
-- [ ] Approved product-feed ingestion framework
-- [ ] Provider fallback, quotas, retries and source provenance
-- [ ] Retailer connector registry and adapter contract tests
-- [ ] Query expansion and better pagination
-- [ ] Product variants, sizes and availability normalization
-- [ ] Search coverage and recall evaluation fixtures
+## v0.3 — Better offer coverage
+- [ ] Additional retailer-approved product feeds and affiliate/catalog APIs
+- [ ] Coupon validity and shipping/return detail adapters
+- [ ] Seller-level marketplace evidence where the source exposes seller IDs
+- [ ] Price freshness expiry, stale badges and alert thresholds
+- [ ] Product/SKU entity resolution across stores
 
-## v0.3 Shopping intelligence
-- [ ] Price freshness and change alerts
-- [ ] Marketplace seller-level evidence where available
-- [ ] Delivery/returns comparison with provenance
-- [ ] Cross-retailer product entity resolution
+## v0.4 — Fashion intelligence
+- [ ] Feedback-driven personal ranking
+- [ ] Normalized fit, material, colour, silhouette and size extraction
+- [ ] Image embeddings for visually similar products
+- [ ] Outfit compatibility and wardrobe planning
+- [ ] Multilingual Indian query expansion
 
-## v0.4 Fashion intelligence
-- [ ] Feedback-based style profile and preference ranking
-- [ ] Category, colour, fit, material and silhouette attributes
-- [ ] Visual embeddings and similar-image search
-- [ ] Outfit compatibility and budget composition
+## v1.0 — Reliable personal agent
+- [ ] Durable worker queue with retries
+- [ ] Authentication and multi-user isolation
+- [ ] Network egress gateway and formal security review
+- [ ] Observability, retention controls and backup/restore
+- [ ] Accessibility, performance and deployment hardening
 
-## v1.0 Reliability
-- [ ] Durable worker queue
-- [ ] Optional authenticated multi-user mode
-- [ ] Observability, privacy controls and retention rules
-- [ ] Accessibility and responsive UI polish
-- [ ] Security review, load testing and deployment guide
-
-Purchasing and checkout are out of scope for this research-autonomy product.
+FIA remains research-only. Purchase and checkout automation are intentionally out of scope.

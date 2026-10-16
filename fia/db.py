@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from fia.config import get_settings
@@ -22,3 +22,32 @@ def build_engine():
 
 engine = build_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def init_db() -> None:
+    """Create new tables and additive columns for existing local installations."""
+    Base.metadata.create_all(bind=engine)
+    additions = {
+        "products": {
+            "original_price": "FLOAT",
+            "discount_percent": "FLOAT",
+            "seller_name": "VARCHAR(180)",
+            "image_source": "VARCHAR(80)",
+            "offer_label": "VARCHAR(180)",
+            "offer_valid_until": "VARCHAR(80)",
+        },
+        "price_observations": {
+            "original_price": "FLOAT",
+            "discount_percent": "FLOAT",
+            "availability": "VARCHAR(80)",
+        },
+    }
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        for table, columns in additions.items():
+            if not inspector.has_table(table):
+                continue
+            existing = {column["name"] for column in inspect(connection).get_columns(table)}
+            for name, sql_type in columns.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))

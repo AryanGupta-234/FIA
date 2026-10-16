@@ -1,36 +1,103 @@
+import asyncio
 import json
-from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 
+from fia.automation import auto_refresh_loop
 from fia.config import get_settings
-from fia.db import Base, SessionLocal, engine
-from fia.models import Product, ResearchJob, RetailerEvidence, UserPreference
+from fia.db import SessionLocal, init_db
+from fia.models import (
+    PriceObservation,
+    Product,
+    ResearchJob,
+    ResearchResult,
+    RetailerEvidence,
+    SavedProduct,
+    SavedSearch,
+    UserPreference,
+)
 from fia.research import create_job, schedule_research
-from fia.schemas import PreferenceUpdate, ResearchRequest
+from fia.schemas import PreferenceUpdate, ResearchRequest, SavedSearchCreate, SavedSearchUpdate
 
 settings = get_settings()
 
 
+def _product_payload(product: Product, result: ResearchResult | None = None, is_saved: bool = False):
+    try:
+        evidence = json.loads(product.evidence_json or "{}")
+    except json.JSONDecodeError:
+        evidence = {}
+    try:
+        reasons = json.loads(result.reasons_json) if result else evidence.get("reasons", [])
+    except json.JSONDecodeError:
+        reasons = evidence.get("reasons", [])
+    return {
+        "id": product.id,
+        "title": product.title,
+        "canonical_url": product.canonical_url,
+        "description": product.description,
+        "brand": product.brand,
+        "category": product.category,
+        "image_url": product.image_url,
+        "image_source": product.image_source,
+        "price": product.price,
+        "original_price": product.original_price,
+        "discount_percent": product.discount_percent,
+        "currency": product.currency,
+        "availability": product.availability,
+        "seller_name": product.seller_name,
+        "offer_label": product.offer_label,
+        "offer_valid_until": product.offer_valid_until,
+        "retailer_domain": product.retailer_domain,
+        "retailer_name": product.retailer_name,
+        "source": product.source,
+        "last_seen": product.last_seen.isoformat() if product.last_seen else None,
+        "relevance_score": result.relevance_score if result else 0,
+        "trust_score": result.trust_score if result else evidence.get("trust_score", 0),
+        "trust_label": evidence.get("trust_label", "Unverified"),
+        "reasons": reasons,
+        "is_saved": is_saved,
+    }
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    Base.metadata.create_all(bind=engine)
-    yield
+    init_db()
+    scheduler = asyncio.create_task(auto_refresh_loop())
+    try:
+        yield
+    finally:
+        scheduler.cancel()
+        with suppress(asyncio.CancelledError):
+            await scheduler
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list,
-                   allow_credentials=False, allow_methods=["GET", "POST", "PUT"],
-                   allow_headers=["Content-Type"])
+app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type"],
+)
 
 
 @app.get("/api/v1/health")
 def health():
-    return {"status": "ok", "environment": settings.app_env,
-            "provider": settings.search_provider, "mode": "research_only", "version": app.version}
+    return {
+        "status": "ok",
+        "environment": settings.app_env,
+        "provider": settings.search_provider,
+        "mode": "research_only",
+        "live_discovery": settings.search_provider != "demo",
+        "automatic_offer_refresh": settings.auto_refresh_enabled and settings.search_provider != "demo",
+        "refresh_interval_minutes": settings.auto_refresh_interval_minutes,
+        "version": app.version,
+    }
 
 
 @app.post("/api/v1/research", status_code=202)
@@ -47,45 +114,244 @@ def get_research(job_id: str):
         job = db.get(ResearchJob, job_id)
         if job is None:
             raise HTTPException(404, "Research job not found")
-        rows = db.scalars(select(Product).order_by(desc(Product.last_seen)).limit(500)).all()
-        products = []
-        for row in rows:
-            try:
-                evidence = json.loads(row.evidence_json or "{}")
-            except json.JSONDecodeError:
-                evidence = {}
-            products.append({"id": row.id, "title": row.title, "canonical_url": row.canonical_url,
-                             "description": row.description, "brand": row.brand, "category": row.category,
-                             "image_url": row.image_url, "price": row.price, "currency": row.currency,
-                             "retailer_domain": row.retailer_domain, "retailer_name": row.retailer_name,
-                             "source": row.source, "availability": row.availability,
-                             "trust_score": evidence.get("trust_score", 0),
-                             "trust_label": evidence.get("trust_label", "Unverified"),
-                             "reasons": evidence.get("reasons", [])})
-        return {"job_id": job.id, "status": job.status, "query": job.query,
-                "result_count": job.result_count, "error": job.error,
-                "products": products[:job.result_count]}
+        rows = db.execute(
+            select(ResearchResult, Product)
+            .join(Product, Product.id == ResearchResult.product_id)
+            .where(ResearchResult.job_id == job_id)
+            .order_by(desc(ResearchResult.relevance_score), desc(ResearchResult.trust_score))
+        ).all()
+        products = [_product_payload(product, result) for result, product in rows]
+        return {
+            "job_id": job.id,
+            "status": job.status,
+            "query": job.query,
+            "result_count": job.result_count,
+            "error": job.error,
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "products": products,
+        }
 
 
 @app.get("/api/v1/products")
-def list_products(limit: int = Query(50, ge=1, le=200), q: str | None = None):
+def list_products(
+    limit: int = Query(60, ge=1, le=200),
+    q: str | None = None,
+    category: str | None = None,
+    budget_max: float | None = Query(None, gt=0),
+):
     with SessionLocal() as db:
-        statement = select(Product).order_by(desc(Product.last_seen)).limit(limit)
+        statement = select(Product).order_by(desc(Product.last_seen))
         if q:
-            statement = (select(Product).where(Product.title.ilike(f"%{q[:100]}%"))
-                         .order_by(desc(Product.last_seen)).limit(limit))
-        return [{"id": item.id, "title": item.title, "url": item.canonical_url,
-                 "price": item.price, "currency": item.currency, "domain": item.retailer_domain,
-                 "retailer": item.retailer_name, "image_url": item.image_url, "source": item.source}
-                for item in db.scalars(statement).all()]
+            statement = statement.where(Product.title.ilike(f"%{q[:100]}%"))
+        if category and category.lower() != "any":
+            statement = statement.where(Product.category.ilike(category[:80]))
+        if budget_max is not None:
+            statement = statement.where(Product.price.is_not(None), Product.price <= budget_max)
+        rows = db.scalars(statement.limit(limit)).all()
+        saved_ids = set(
+            db.scalars(select(SavedProduct.product_id).where(
+                SavedProduct.product_id.in_([row.id for row in rows])
+            )).all()
+        ) if rows else set()
+        return [_product_payload(row, is_saved=row.id in saved_ids) for row in rows]
+
+
+@app.get("/api/v1/products/{product_id}")
+def get_product(product_id: int):
+    with SessionLocal() as db:
+        product = db.get(Product, product_id)
+        if product is None:
+            raise HTTPException(404, "Product not found")
+        saved = db.scalar(select(SavedProduct.id).where(SavedProduct.product_id == product_id)) is not None
+        history = db.scalars(
+            select(PriceObservation).where(PriceObservation.product_id == product_id)
+            .order_by(desc(PriceObservation.observed_at)).limit(30)
+        ).all()
+        return {
+            "product": _product_payload(product, is_saved=saved),
+            "price_history": [
+                {
+                    "price": point.price,
+                    "original_price": point.original_price,
+                    "discount_percent": point.discount_percent,
+                    "currency": point.currency,
+                    "availability": point.availability,
+                    "source": point.source,
+                    "observed_at": point.observed_at.isoformat(),
+                }
+                for point in history
+            ],
+        }
+
+
+@app.get("/api/v1/offers")
+def list_offers(limit: int = Query(60, ge=1, le=200), q: str | None = None):
+    with SessionLocal() as db:
+        statement = select(Product).where(
+            Product.price.is_not(None),
+            or_(
+                Product.discount_percent > 0,
+                Product.original_price > Product.price,
+            ),
+        )
+        if q:
+            statement = statement.where(Product.title.ilike(f"%{q[:100]}%"))
+        rows = db.scalars(
+            statement.order_by(desc(Product.discount_percent), desc(Product.last_seen)).limit(limit)
+        ).all()
+        return [_product_payload(row) for row in rows]
 
 
 @app.get("/api/v1/retailers")
 def list_retailers():
     with SessionLocal() as db:
         rows = db.scalars(select(RetailerEvidence).order_by(desc(RetailerEvidence.updated_at))).all()
-        return [{"domain": row.domain, "name": row.retailer_name, "https": row.https,
-                 "confidence": row.confidence, "notes": row.evidence_notes} for row in rows]
+        return [
+            {
+                "domain": row.domain,
+                "name": row.retailer_name,
+                "https": row.https,
+                "confidence": row.confidence,
+                "notes": row.evidence_notes,
+            }
+            for row in rows
+        ]
+
+
+@app.get("/api/v1/history")
+def list_history(limit: int = Query(30, ge=1, le=100)):
+    with SessionLocal() as db:
+        rows = db.scalars(select(ResearchJob).order_by(desc(ResearchJob.created_at)).limit(limit)).all()
+        return [
+            {
+                "job_id": row.id,
+                "query": row.query,
+                "status": row.status,
+                "result_count": row.result_count,
+                "error": row.error,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+            }
+            for row in rows
+        ]
+
+
+@app.get("/api/v1/saved-searches")
+def get_saved_searches():
+    with SessionLocal() as db:
+        rows = db.scalars(select(SavedSearch).order_by(desc(SavedSearch.created_at))).all()
+        return [
+            {
+                "id": row.id,
+                "query": row.query,
+                "budget_max": row.budget_max,
+                "category": row.category,
+                "active": row.active,
+                "last_run_at": row.last_run_at.isoformat() if row.last_run_at else None,
+                "next_refresh_at": row.next_refresh_at.isoformat() if row.next_refresh_at else None,
+            }
+            for row in rows
+        ]
+
+
+@app.post("/api/v1/saved-searches", status_code=201)
+def save_search(payload: SavedSearchCreate):
+    now = datetime.now(UTC)
+    with SessionLocal() as db:
+        row = db.scalar(
+            select(SavedSearch).where(
+                SavedSearch.query == payload.query,
+                SavedSearch.budget_max == payload.budget_max,
+                SavedSearch.category == payload.category,
+            )
+        )
+        if row is None:
+            row = SavedSearch(
+                query=payload.query,
+                budget_max=payload.budget_max,
+                category=payload.category,
+            )
+            db.add(row)
+        row.active = True
+        row.next_refresh_at = now + timedelta(minutes=settings.auto_refresh_interval_minutes)
+        db.commit()
+        db.refresh(row)
+        job_id = create_job(db, row.query, row.budget_max, row.category)
+        row.last_run_at = now
+        db.commit()
+        saved_id = row.id
+    schedule_research(job_id, True, 25)
+    return {"id": saved_id, "job_id": job_id, "status": "watching"}
+
+
+@app.put("/api/v1/saved-searches/{search_id}")
+def update_saved_search(search_id: int, payload: SavedSearchUpdate):
+    with SessionLocal() as db:
+        row = db.get(SavedSearch, search_id)
+        if row is None:
+            raise HTTPException(404, "Saved search not found")
+        row.active = payload.active
+        db.commit()
+    return {"status": "updated", "active": payload.active}
+
+
+@app.delete("/api/v1/saved-searches/{search_id}")
+def delete_saved_search(search_id: int):
+    with SessionLocal() as db:
+        row = db.get(SavedSearch, search_id)
+        if row is None:
+            raise HTTPException(404, "Saved search not found")
+        db.delete(row)
+        db.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/api/v1/saved-searches/{search_id}/refresh", status_code=202)
+def refresh_saved_search(search_id: int):
+    now = datetime.now(UTC)
+    with SessionLocal() as db:
+        row = db.get(SavedSearch, search_id)
+        if row is None:
+            raise HTTPException(404, "Saved search not found")
+        job_id = create_job(db, row.query, row.budget_max, row.category)
+        row.last_run_at = now
+        row.next_refresh_at = now + timedelta(minutes=settings.auto_refresh_interval_minutes)
+        db.commit()
+    schedule_research(job_id, True, 25)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/v1/saved-products")
+def get_saved_products():
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(Product).join(SavedProduct, SavedProduct.product_id == Product.id)
+            .order_by(desc(SavedProduct.created_at))
+        ).scalars().all()
+        return [_product_payload(row, is_saved=True) for row in rows]
+
+
+@app.post("/api/v1/saved-products/{product_id}", status_code=201)
+def save_product(product_id: int):
+    with SessionLocal() as db:
+        if db.get(Product, product_id) is None:
+            raise HTTPException(404, "Product not found")
+        row = db.scalar(select(SavedProduct).where(SavedProduct.product_id == product_id))
+        if row is None:
+            db.add(SavedProduct(product_id=product_id))
+            db.commit()
+    return {"status": "saved"}
+
+
+@app.delete("/api/v1/saved-products/{product_id}")
+def unsave_product(product_id: int):
+    with SessionLocal() as db:
+        row = db.scalar(select(SavedProduct).where(SavedProduct.product_id == product_id))
+        if row is not None:
+            db.delete(row)
+            db.commit()
+    return {"status": "removed"}
 
 
 @app.get("/api/v1/preferences")
@@ -93,13 +359,22 @@ def get_preferences():
     with SessionLocal() as db:
         row = db.get(UserPreference, 1)
         if row is None:
-            return {"preferred_categories": [], "preferred_brands": [], "preferred_colours": [],
-                    "sizes": {}, "style_notes": "", "budget_default": None}
-        return {"preferred_categories": json.loads(row.preferred_categories),
-                "preferred_brands": json.loads(row.preferred_brands),
-                "preferred_colours": json.loads(row.preferred_colours),
-                "sizes": json.loads(row.sizes), "style_notes": row.style_notes,
-                "budget_default": row.budget_default}
+            return {
+                "preferred_categories": [],
+                "preferred_brands": [],
+                "preferred_colours": [],
+                "sizes": {},
+                "style_notes": "",
+                "budget_default": None,
+            }
+        return {
+            "preferred_categories": json.loads(row.preferred_categories),
+            "preferred_brands": json.loads(row.preferred_brands),
+            "preferred_colours": json.loads(row.preferred_colours),
+            "sizes": json.loads(row.sizes),
+            "style_notes": row.style_notes,
+            "budget_default": row.budget_default,
+        }
 
 
 @app.put("/api/v1/preferences")
@@ -121,7 +396,18 @@ def update_preferences(payload: PreferenceUpdate):
 @app.get("/api/v1/stats")
 def stats():
     with SessionLocal() as db:
-        return {"products": db.scalar(select(func.count(Product.id))) or 0,
-                "research_jobs": db.scalar(select(func.count(ResearchJob.id))) or 0,
-                "completed_jobs": db.scalar(select(func.count(ResearchJob.id)).where(
-                    ResearchJob.status == "completed")) or 0}
+        return {
+            "products": db.scalar(select(func.count(Product.id))) or 0,
+            "research_jobs": db.scalar(select(func.count(ResearchJob.id))) or 0,
+            "completed_jobs": db.scalar(
+                select(func.count(ResearchJob.id)).where(ResearchJob.status == "completed")
+            ) or 0,
+            "offers": db.scalar(
+                select(func.count(Product.id)).where(
+                    Product.price.is_not(None),
+                    or_(Product.discount_percent > 0, Product.original_price > Product.price),
+                )
+            ) or 0,
+            "saved_products": db.scalar(select(func.count(SavedProduct.id))) or 0,
+            "saved_searches": db.scalar(select(func.count(SavedSearch.id))) or 0,
+        }

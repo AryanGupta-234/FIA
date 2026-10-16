@@ -2,18 +2,30 @@ from fia.discovery.base import SearchResult
 
 
 class DemoSearchProvider:
-    """Deterministic fixture provider; these are not real listings or live offers."""
+    """Deterministic local fixtures. Results are labelled demo, never live offers."""
 
     async def search(self, query: str, limit: int = 10) -> list[SearchResult]:
-        items = [
-            SearchResult(f"Demo: Minimal white sneakers — {query}",
-                         "https://www.myntra.com/demo-minimal-white-sneakers",
-                         "DEMO DATA — illustrative listing, not a current product or price."),
-            SearchResult(f"Demo: Everyday casual shoes — {query}",
-                         "https://www.ajio.com/demo-everyday-casual-shoes",
-                         "DEMO DATA — illustrative listing, not a current product or price."),
-            SearchResult(f"Demo: Canvas low-top footwear — {query}",
-                         "https://www.amazon.in/demo-canvas-low-top",
-                         "DEMO DATA — illustrative listing, not a current product or price."),
+        fixtures = [
+            SearchResult(
+                title=f"Demo discovery: Contemporary everyday essentials — {query}",
+                url="https://www.myntra.com/demo-everyday-essentials",
+                snippet="DEMO DATA — illustrative search result; not a live product listing or price.",
+                source="demo",
+            ),
+            SearchResult(
+                title=f"Demo discovery: Minimal wardrobe edit — {query}",
+                url="https://www.ajio.com/demo-minimal-wardrobe",
+                snippet="DEMO DATA — illustrative search result; not a live product listing or price.",
+                source="demo",
+            ),
+            SearchResult(
+                title=f"Demo discovery: Modern casual collection — {query}",
+                url="https://www.amazon.in/demo-modern-casual",
+                snippet="DEMO DATA — illustrative search result; not a live product listing or price.",
+                source="demo",
+            ),
         ]
-        return items[:limit]
+        return fixtures[:limit]
+
+    async def search_images(self, query: str, limit: int = 12) -> list[SearchResult]:
+        return []

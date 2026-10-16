@@ -1,47 +1,63 @@
-# Fashion Intelligence Agent (FIA)
+# FIA — Fashion Intelligence Agent
 
-Standalone India-first fashion product research assistant. FIA discovers products from configured search providers and permitted retailer pages, normalizes listings, records provenance, ranks relevance and presents evidence-backed comparisons.
+An India-first fashion research workspace. Describe what you want, and FIA searches configured discovery sources, inspects permitted product pages, extracts structured product/offer data, captures images, compares evidence and keeps an opt-in watchlist refreshed.
 
-**Research-only autonomy:** no store login, cart actions, checkout, payment or purchasing.
+**FIA is research-only.** It never logs in to stores, adds products to carts, checks out or purchases anything.
 
-## Features
-- FastAPI backend and SQLAlchemy persistence (SQLite by default; PostgreSQL supported).
-- Pluggable asynchronous search providers: local demo and optional Brave Search.
-- Robots-aware page fetching with timeout, response-size and content-type limits.
-- JSON-LD Product/Offer extraction and metadata fallback.
-- URL normalization, deduplication, budget-aware ranking and explainable retailer-domain evidence.
-- Research history, product records, price observations and user preferences.
-- React + Vite dashboard.
-- Windows PowerShell launch scripts, Dockerfile, Compose and GitHub Actions CI.
+## What is included
+- FastAPI + SQLAlchemy backend; SQLite by default.
+- India-scoped Brave Search integration for web listings and image search.
+- Product-page extraction for JSON-LD Product/Offer, images, prices, availability and seller details.
+- Offer evidence: current/original price, discount percentage and timestamped price observations when exposed by the source.
+- Retailer-domain evidence with transparent reasons and no blanket authenticity claims.
+- Research history, saved products, style preferences and opt-in saved-search monitoring.
+- React + Vite workspace with an animated first-run boot screen, dashboard, discover, offers, saved pieces and history views.
+- Windows PowerShell launcher plus optional Windows Start Menu shortcut.
 
-## Windows 11 quick start
-1. Install Python 3.11+ and Node.js 20+.
-2. Copy `.env.example` to `.env`.
-3. Run `./scripts/start-backend.ps1` in PowerShell.
-4. Run `./scripts/start-dashboard.ps1` in another terminal.
-5. Open http://localhost:5173 (API docs: http://localhost:8000/docs).
+## Windows 11 setup
+Requirements: Python 3.11+ and Node.js 20+.
 
-Without API credentials FIA runs in clearly-labelled demo mode. Configure `BRAVE_SEARCH_API_KEY` and `SEARCH_PROVIDER=brave` in `.env` for live search.
+1. Clone the repository and switch to dev.
+2. Copy .env.example to .env.
+3. For live discovery, set SEARCH_PROVIDER=brave and add your own BRAVE_SEARCH_API_KEY in .env. Without a key, FIA runs in clearly labelled demo mode.
+4. Start everything with ./scripts/start-fia.ps1.
+5. Open http://localhost:5173. API docs are at http://127.0.0.1:8000/docs.
 
-## API
-- `GET /api/v1/health`
-- `POST /api/v1/research`
-- `GET /api/v1/research/{job_id}`
-- `GET /api/v1/products`
-- `GET /api/v1/retailers`
-- `GET|PUT /api/v1/preferences`
-- `GET /api/v1/stats`
+To add FIA to the Windows Start Menu, run ./scripts/install-start-menu.ps1 once. Search Start for FIA - Fashion Intelligence Agent.
+
+For manual launch, use ./scripts/start-backend.ps1 and ./scripts/start-dashboard.ps1 in separate PowerShell windows.
+
+## Live discovery configuration
+See .env.example. The Brave API key is supplied by the user and must not be committed. The web and image endpoints are separate. Automatic refresh runs only for active saved searches and only while the backend is running with a live provider. Default cadence: six hours.
+
+## API surface
+- GET /api/v1/health
+- POST /api/v1/research and GET /api/v1/research/{job_id}
+- GET /api/v1/products, GET /api/v1/products/{product_id}
+- GET /api/v1/offers, GET /api/v1/history
+- GET/POST /api/v1/saved-searches, PUT/DELETE /api/v1/saved-searches/{id}
+- POST /api/v1/saved-searches/{id}/refresh
+- GET /api/v1/saved-products, POST/DELETE /api/v1/saved-products/{product_id}
+- GET/PUT /api/v1/preferences, GET /api/v1/retailers, GET /api/v1/stats
 
 ## Development
-```powershell
-python -m venv .venv
+Python:
+~~~powershell
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
+ruff check fia tests
 pytest
-ruff check .
+~~~
+
+Dashboard:
+~~~powershell
 cd frontend
 npm install
 npm run build
-```
+~~~
 
-See `docs/ARCHITECTURE.md`, `docs/SECURITY.md` and `docs/ROADMAP.md`. Search coverage is limited by provider availability and retailer permissions; it is not exhaustive internet crawling. Always verify live price, stock, seller, size, delivery and returns on the retailer website.
+## Accuracy boundaries
+FIA cannot crawl the entire internet exhaustively. Coverage depends on the configured search provider, the results it returns, retailer permissions and robots policy. Images from image search are a fallback and may not represent the exact SKU. A visible discount is shown only when source data provides the relevant price evidence. Always verify the live retailer listing before purchase.
+
+See docs/ARCHITECTURE.md, docs/SECURITY.md and docs/ROADMAP.md.

@@ -33,13 +33,15 @@ class PageFetcher:
             allowed, reason = await self.robots.allowed(url)
             if not allowed:
                 return None, "Fetch skipped: " + reason
-        headers = {"User-Agent": self.settings.crawl_user_agent,
-                   "Accept": "text/html,application/xhtml+xml"}
+        headers = {
+            "User-Agent": self.settings.crawl_user_agent,
+            "Accept": "text/html,application/xhtml+xml",
+        }
         try:
-            async with httpx.AsyncClient(timeout=self.settings.crawl_timeout_seconds,
-                                         follow_redirects=False) as client, client.stream(
-                "GET", url, headers=headers
-            ) as response:
+            async with httpx.AsyncClient(
+                timeout=self.settings.crawl_timeout_seconds, follow_redirects=False
+            ) as client:
+                async with client.stream("GET", url, headers=headers) as response:
                     if response.status_code in (301, 302, 303, 307, 308):
                         return None, "Redirect skipped; destination must be independently validated"
                     if response.status_code != 200:
@@ -47,6 +49,9 @@ class PageFetcher:
                     content_type = response.headers.get("content-type", "").lower()
                     if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
                         return None, "Non-HTML content skipped"
+                    declared_size = response.headers.get("content-length")
+                    if declared_size and int(declared_size) > self.settings.crawl_max_bytes:
+                        return None, "Page exceeded configured response-size limit"
                     chunks, size = [], 0
                     async for chunk in response.aiter_bytes():
                         size += len(chunk)
@@ -54,5 +59,5 @@ class PageFetcher:
                             return None, "Page exceeded configured response-size limit"
                         chunks.append(chunk)
                     return b"".join(chunks).decode("utf-8", errors="replace"), "Fetched"
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
             return None, f"Network error: {type(exc).__name__}"
