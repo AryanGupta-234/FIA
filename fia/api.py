@@ -23,8 +23,17 @@ from fia.models import (
 )
 from fia.research import create_job, schedule_research
 from fia.schemas import PreferenceUpdate, ResearchRequest, SavedSearchCreate, SavedSearchUpdate
+from fia.services.freshness import price_freshness
 
 settings = get_settings()
+
+
+def _iso_timestamp(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.isoformat()
 
 
 def _product_payload(
@@ -47,6 +56,14 @@ def _product_payload(
         "description": product.description,
         "brand": product.brand,
         "category": product.category,
+        "product_type": product.product_type,
+        "colour": product.colour,
+        "material": product.material,
+        "fit": product.fit,
+        "size_label": product.size_label,
+        "gender": product.gender,
+        "sku": product.sku,
+        "gtin": product.gtin,
         "image_url": product.image_url,
         "image_source": product.image_source,
         "price": product.price,
@@ -60,7 +77,14 @@ def _product_payload(
         "retailer_domain": product.retailer_domain,
         "retailer_name": product.retailer_name,
         "source": product.source,
-        "last_seen": product.last_seen.isoformat() if product.last_seen else None,
+        "last_seen": _iso_timestamp(product.last_seen),
+        "price_checked_at": _iso_timestamp(product.price_checked_at),
+        "price_freshness": price_freshness(
+            product.price_checked_at, settings.price_stale_after_hours
+        )["status"],
+        "price_age_hours": price_freshness(
+            product.price_checked_at, settings.price_stale_after_hours
+        )["age_hours"],
         "relevance_score": result.relevance_score if result else 0,
         "trust_score": result.trust_score if result else evidence.get("trust_score", 0),
         "trust_label": evidence.get("trust_label", "Unverified"),
@@ -81,7 +105,7 @@ async def lifespan(_app: FastAPI):
             await scheduler
 
 
-app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -103,6 +127,9 @@ def health():
             settings.auto_refresh_enabled and settings.search_provider != "demo"
         ),
         "refresh_interval_minutes": settings.auto_refresh_interval_minutes,
+        "price_stale_after_hours": settings.price_stale_after_hours,
+        "price_alert_cooldown_hours": settings.price_alert_cooldown_hours,
+        "default_price_alert_threshold_percent": settings.min_price_alert_drop_percent,
         "version": app.version,
     }
 
@@ -198,7 +225,11 @@ def get_product(product_id: int):
 
 
 @app.get("/api/v1/offers")
-def list_offers(limit: int = Query(60, ge=1, le=200), q: str | None = None):
+def list_offers(
+    limit: int = Query(60, ge=1, le=200),
+    q: str | None = None,
+    include_stale: bool = False,
+):
     with SessionLocal() as db:
         statement = select(Product).where(
             Product.price.is_not(None),
@@ -207,12 +238,39 @@ def list_offers(limit: int = Query(60, ge=1, le=200), q: str | None = None):
                 Product.original_price > Product.price,
             ),
         )
+        if not include_stale:
+            fresh_since = datetime.now(UTC) - timedelta(hours=settings.price_stale_after_hours)
+            statement = statement.where(
+                Product.price_checked_at.is_not(None),
+                Product.price_checked_at >= fresh_since,
+            )
         if q:
             statement = statement.where(Product.title.ilike(f"%{q[:100]}%"))
         rows = db.scalars(
-            statement.order_by(desc(Product.discount_percent), desc(Product.last_seen)).limit(limit)
+            statement.order_by(desc(Product.discount_percent), desc(Product.price_checked_at)).limit(limit)
         ).all()
         return [_product_payload(row) for row in rows]
+
+
+@app.get("/api/v1/products/{product_id}/matches")
+def get_product_matches(product_id: int):
+    """Return separate retailer listings only when they share an exact validated GTIN."""
+    with SessionLocal() as db:
+        product = db.get(Product, product_id)
+        if product is None:
+            raise HTTPException(404, "Product not found")
+        if not product.gtin:
+            return {"match_method": "exact_gtin", "gtin": None, "matches": []}
+        matches = db.scalars(
+            select(Product).where(Product.gtin == product.gtin, Product.id != product_id)
+            .order_by(desc(Product.price_checked_at), desc(Product.last_seen))
+            .limit(30)
+        ).all()
+        return {
+            "match_method": "exact_gtin",
+            "gtin": product.gtin,
+            "matches": [_product_payload(row) for row in matches],
+        }
 
 
 @app.get("/api/v1/alerts")
@@ -241,8 +299,8 @@ def list_alerts(
                 "current_price": alert.current_price,
                 "currency": alert.currency,
                 "drop_percent": alert.drop_percent,
-                "created_at": alert.created_at.isoformat() if alert.created_at else None,
-                "read_at": alert.read_at.isoformat() if alert.read_at else None,
+                "created_at": _iso_timestamp(alert.created_at),
+                "read_at": _iso_timestamp(alert.read_at),
             }
             for alert, product in rows
         ]
@@ -427,6 +485,7 @@ def get_preferences():
                 "sizes": {},
                 "style_notes": "",
                 "budget_default": None,
+                "price_alert_threshold_percent": settings.min_price_alert_drop_percent,
             }
         return {
             "preferred_categories": json.loads(row.preferred_categories),
@@ -435,6 +494,7 @@ def get_preferences():
             "sizes": json.loads(row.sizes),
             "style_notes": row.style_notes,
             "budget_default": row.budget_default,
+            "price_alert_threshold_percent": row.price_alert_threshold_percent,
         }
 
 
@@ -448,6 +508,7 @@ def update_preferences(payload: PreferenceUpdate):
         row.sizes = json.dumps(payload.sizes)
         row.style_notes = payload.style_notes
         row.budget_default = payload.budget_default
+        row.price_alert_threshold_percent = payload.price_alert_threshold_percent
         row.updated_at = datetime.now(UTC)
         db.add(row)
         db.commit()
@@ -466,6 +527,10 @@ def stats():
             "offers": db.scalar(
                 select(func.count(Product.id)).where(
                     Product.price.is_not(None),
+                    Product.price_checked_at.is_not(None),
+                    Product.price_checked_at >= datetime.now(UTC) - timedelta(
+                        hours=settings.price_stale_after_hours
+                    ),
                     or_(Product.discount_percent > 0, Product.original_price > Product.price),
                 )
             ) or 0,

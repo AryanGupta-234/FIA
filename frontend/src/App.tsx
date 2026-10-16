@@ -17,6 +17,14 @@ type Product = {
   description?: string | null;
   brand?: string | null;
   category?: string | null;
+  product_type?: string | null;
+  colour?: string | null;
+  material?: string | null;
+  fit?: string | null;
+  size_label?: string | null;
+  gender?: string | null;
+  sku?: string | null;
+  gtin?: string | null;
   image_url?: string | null;
   image_source?: string | null;
   price?: number | null;
@@ -31,6 +39,9 @@ type Product = {
   retailer_name?: string | null;
   source: string;
   last_seen?: string | null;
+  price_checked_at?: string | null;
+  price_freshness?: "fresh" | "stale" | "unknown";
+  price_age_hours?: number | null;
   relevance_score?: number;
   trust_score?: number;
   trust_label?: string;
@@ -95,6 +106,9 @@ type Health = {
   live_discovery: boolean;
   automatic_offer_refresh: boolean;
   refresh_interval_minutes: number;
+  price_stale_after_hours: number;
+  price_alert_cooldown_hours: number;
+  default_price_alert_threshold_percent: number;
 };
 
 type Preferences = {
@@ -104,6 +118,7 @@ type Preferences = {
   sizes: Record<string, string>;
   style_notes: string;
   budget_default: number | null;
+  price_alert_threshold_percent: number;
 };
 
 type View = "overview" | "discover" | "offers" | "alerts" | "saved" | "history" | "profile";
@@ -172,7 +187,7 @@ function BootScreen({ onEnter }: { onEnter: () => void }) {
   return <div className="boot-screen">
     <div className="boot-orbit orbit-one" /><div className="boot-orbit orbit-two" />
     <div className="boot-card">
-      <div className="boot-topline"><span>FIA / SYSTEM INITIALIZATION</span><span>v0.2.0</span></div>
+      <div className="boot-topline"><span>FIA / SYSTEM INITIALIZATION</span><span>v0.3.0</span></div>
       <Logo />
       <div className="boot-title"><span>YOUR STYLE.</span><strong>YOUR SIGNAL.</strong></div>
       <p className="boot-subtitle">A calmer way to discover fashion worth your attention.</p>
@@ -198,6 +213,34 @@ function ProductCard({
   const discount = product.discount_percent && product.discount_percent > 0
     ? Math.round(product.discount_percent) : null;
   const saved = Boolean(product.is_saved);
+  const [matches, setMatches] = useState<Product[]>([]);
+  const [matchesOpen, setMatchesOpen] = useState(false);
+  const [matchesLoading, setMatchesLoading] = useState(false);
+  const [matchesLoaded, setMatchesLoaded] = useState(false);
+  const [matchesError, setMatchesError] = useState("");
+
+  async function toggleMatches() {
+    if (matchesOpen) {
+      setMatchesOpen(false);
+      return;
+    }
+    setMatchesOpen(true);
+    if (matchesLoaded || matchesLoading) return;
+    setMatchesLoading(true);
+    setMatchesError("");
+    try {
+      const result = await api<{ matches: Product[] }>(
+        "/api/v1/products/" + product.id + "/matches",
+      );
+      setMatches(result.matches);
+      setMatchesLoaded(true);
+    } catch (err) {
+      setMatchesError(err instanceof Error ? err.message : "Could not compare listings");
+    } finally {
+      setMatchesLoading(false);
+    }
+  }
+
   return <article className={"product-card" + (compact ? " compact-card" : "")}>
     <div className="product-visual">
       {product.image_url && !imageFailed
@@ -228,10 +271,40 @@ function ProductCard({
         <span>{product.availability?.split("/").pop()?.replace(/_/g, " ") || "Check availability"}</span>
         <span>{product.last_seen ? relativeTime(product.last_seen) : "Recently found"}</span>
       </div>
+      <div className="price-freshness-row">
+        <span className={"price-freshness " + (product.price_freshness || "unknown")}>
+          {product.price_freshness === "fresh" ? "PRICE FRESH" : product.price_freshness === "stale" ? "PRICE STALE" : "PRICE UNVERIFIED"}
+        </span>
+        <span>Checked {relativeTime(product.price_checked_at)}</span>
+      </div>
+      {[product.brand, product.product_type, product.colour, product.material, product.fit, product.size_label, product.gender].filter(Boolean).length > 0 &&
+        <div className="product-attributes">
+          {[product.brand, product.product_type, product.colour, product.material, product.fit, product.size_label, product.gender].filter(Boolean).map(value =>
+            <span key={value}>{value}</span>)}
+        </div>}
       {!compact && product.offer_label && <div className="offer-proof"><Tag size={12} /> {product.offer_label}</div>}
       <a className="product-link" href={product.canonical_url} target="_blank" rel="noreferrer">
         View at retailer <ArrowUpRight size={15} />
       </a>
+      {product.gtin && <div className="gtin-match-wrap">
+        <button className="gtin-match-toggle" onClick={() => void toggleMatches()} disabled={matchesLoading}>
+          <PackageSearch size={13} />
+          {matchesLoading ? "Comparing…" : matchesOpen ? "Hide matching listings" : "Compare same barcode"}
+          <span>GTIN</span>
+        </button>
+        {matchesOpen && <div className="gtin-match-panel">
+          {matchesLoading ? <small>Looking for the same GTIN across discovered retailers…</small>
+            : matchesError ? <small>{matchesError}</small>
+            : matches.length ? matches.map(match => <div className="gtin-match-row" key={match.id}>
+              <div><strong>{match.retailer_name || match.retailer_domain}</strong>
+                <small>{match.price_freshness === "fresh" ? "Fresh price" : "Price needs rechecking"}</small></div>
+              <span>{money(match.price, match.currency)}</span>
+              <a href={match.canonical_url} target="_blank" rel="noreferrer" aria-label="Open matching listing">
+                <ExternalLink size={13} />
+              </a>
+            </div>) : <small>No other listing with this exact barcode has been found yet.</small>}
+        </div>}
+      </div>}
     </div>
   </article>;
 }
@@ -264,7 +337,7 @@ export default function App() {
   const [alerts, setAlerts] = useState<PriceAlert[]>([]);
   const [preferences, setPreferences] = useState<Preferences>({
     preferred_categories: [], preferred_brands: [], preferred_colours: [],
-    sizes: {}, style_notes: "", budget_default: null,
+    sizes: {}, style_notes: "", budget_default: null, price_alert_threshold_percent: 2,
   });
   const [query, setQuery] = useState("");
   const [budget, setBudget] = useState("5000");
@@ -407,6 +480,7 @@ export default function App() {
           sizes: preferences.sizes,
           style_notes: styleNotes,
           budget_default: preferences.budget_default,
+          price_alert_threshold_percent: preferences.price_alert_threshold_percent,
         }),
       });
       setNotice("Your style profile has been saved");
@@ -651,6 +725,14 @@ export default function App() {
                 <label>YOUR STYLE IN YOUR WORDS<textarea value={styleNotes} onChange={e => setStyleNotes(e.target.value)} rows={4} placeholder="Describe the silhouettes, fabrics, fits and moods you prefer…" /></label>
               </div>
               <div className="form-section"><span className="section-kicker">AUTOMATION</span><h3>Research behaviour</h3>
+                <label className="alert-threshold-field">MINIMUM VERIFIED PRICE DROP TO ALERT
+                  <div><input type="number" min="0" max="100" step="0.5"
+                    value={preferences.price_alert_threshold_percent}
+                    onChange={e => setPreferences(current => ({
+                      ...current, price_alert_threshold_percent: Number(e.target.value),
+                    }))} /><span>%</span></div>
+                  <small>Only same-currency drops meeting this threshold create an alert. Repeated alerts are grouped by a {health?.price_alert_cooldown_hours ?? 24}-hour cooldown. Prices older than {health?.price_stale_after_hours ?? 72} hours are marked stale.</small>
+                </label>
                 <div className="automation-info"><div className="automation-icon"><Zap size={17} /></div><div><strong>{health?.automatic_offer_refresh ? "Automatic refresh enabled" : "Live refresh is waiting for a provider"}</strong>
                   <p>{health?.automatic_offer_refresh ? "Active saved searches refresh every " + Math.round(health.refresh_interval_minutes / 60) + " hours while FIA is running." : "Demo mode is local-only. Add your Brave Search API key and switch the provider to enable live discovery and watch refreshes."}</p></div></div>
               </div>

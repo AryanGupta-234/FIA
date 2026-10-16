@@ -7,9 +7,11 @@ An India-first fashion research workspace. Describe what you want, and FIA searc
 ## What is included
 - FastAPI + SQLAlchemy backend; SQLite by default.
 - India-scoped Brave Search integration for web listings and image search.
-- Product-page extraction for JSON-LD Product/Offer, images, prices, availability and seller details.
+- Product-page extraction for JSON-LD Product/Offer, images, prices, availability, seller details and fashion attributes (colour, material, fit, size and audience).
 - Offer evidence: current/original price, discount percentage and timestamped price observations when exposed by the source.
-- In-app price-drop alerts for saved products when a later refresh confirms a lower same-currency price.
+- In-app price-drop alerts for saved products when a later refresh confirms a same-currency reduction above your configured threshold; duplicate alerts are cooled down.
+- Price freshness labels; offer feeds exclude prices older than the configured freshness window by default.
+- Exact validated GTIN matching across retailer listings, without merging separate seller prices or product records.
 - Retailer-domain evidence with transparent reasons and no blanket authenticity claims.
 - Research history, saved products, style preferences and opt-in saved-search monitoring.
 - React + Vite workspace with an animated first-run boot screen, dashboard, discover, offers, saved pieces and history views.
@@ -29,13 +31,13 @@ To add FIA to the Windows Start Menu, run ./scripts/install-start-menu.ps1 once.
 For manual launch, use ./scripts/start-backend.ps1 and ./scripts/start-dashboard.ps1 in separate PowerShell windows.
 
 ## Live discovery configuration
-See .env.example. The Brave API key is supplied by the user and must not be committed. The web and image endpoints are separate. Automatic refresh runs only for active saved searches and only while the backend is running with a live provider. Default cadence: six hours.
+See .env.example. The Brave API key is supplied by the user and must not be committed. The web and image endpoints are separate. Automatic refresh runs only for active saved searches and only while the backend is running with a live provider. Default cadence: six hours. Prices are labelled stale after 72 hours by default; the freshness window, alert cooldown and fallback alert threshold can be changed in `.env`. The alert threshold can also be set in the Style Profile.
 
 ## API surface
 - GET /api/v1/health
 - POST /api/v1/research and GET /api/v1/research/{job_id}
-- GET /api/v1/products, GET /api/v1/products/{product_id}
-- GET /api/v1/offers, GET /api/v1/history
+- GET /api/v1/products, GET /api/v1/products/{product_id}, GET /api/v1/products/{product_id}/matches
+- GET /api/v1/offers (use `include_stale=true` to include expired observations), GET /api/v1/history
 - GET /api/v1/alerts, POST /api/v1/alerts/{id}/read
 - GET/POST /api/v1/saved-searches, PUT/DELETE /api/v1/saved-searches/{id}
 - POST /api/v1/saved-searches/{id}/refresh

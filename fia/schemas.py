@@ -16,6 +16,7 @@ class PreferenceUpdate(BaseModel):
     sizes: dict[str, str] = Field(default_factory=dict)
     style_notes: str = Field(default="", max_length=2000)
     budget_default: float | None = Field(default=None, gt=0, le=10_000_000)
+    price_alert_threshold_percent: float = Field(default=2.0, ge=0, le=100)
 
 
 class SavedSearchCreate(BaseModel):

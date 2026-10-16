@@ -14,12 +14,12 @@ FIA is a standalone, India-first fashion research workspace. It automates discov
 2. The Brave adapter uses India-scoped web search. A separate image search is a visual fallback when a product page does not expose an image.
 3. Candidate URLs are normalized and deduplicated.
 4. A small bounded number of product pages may be inspected only when robots policy permits. The fetcher accepts HTTP(S), rejects non-public DNS targets, checks robots.txt, refuses redirects, and limits time and bytes.
-5. The extractor prefers JSON-LD Product/Offer data, then falls back to Open Graph and product price metadata.
+5. The extractor prefers JSON-LD Product/Offer and fashion attributes, then falls back to Open Graph and product price metadata.
 6. The ranking layer combines lexical query match, budget fit and retailer-domain evidence with a transparent reason list.
-7. Products, research-result links and changed price observations are stored.
+7. Products, research-result links, fashion attributes and changed price observations are stored. Price-check timestamps drive the freshness state.
 
 ## Offer evidence
-A discount is displayed only when the source provides both a current and original/reference price or an explicit structured discount. FIA does not infer an offer from a promotional adjective or create artificial sale prices. Each price observation has a timestamp and source. Retailer price, stock, seller, delivery and return terms can change and should be rechecked on the retailer site.
+A discount is displayed only when the source provides both a current and original/reference price or an explicit structured discount. Offers older than the freshness window (72 hours by default) are excluded from the main offer feed; callers can explicitly request stale entries. FIA does not infer an offer from a promotional adjective or create artificial sale prices. Each price observation has a timestamp and source. Saved-product alerts use a configurable minimum percentage drop and per-product cooldown to suppress repeat notifications. Retailer price, stock, seller, delivery and return terms can change and should be rechecked on the retailer site.
 
 ## Image handling
 - First choice: product image in retailer JSON-LD or Open Graph metadata.
@@ -32,9 +32,10 @@ A background asyncio scheduler checks only user-saved active searches. In live-p
 
 ## Persistence model
 - ResearchJob: query lifecycle and status.
-- Product: normalized canonical product entity and latest observed offer fields.
+- Product: normalized canonical listing, latest observed offer, price-check timestamp, fashion attributes and optional GTIN/SKU identifiers. Exact GTIN matches expose separate retailer listings without combining seller or price data.
 - ResearchResult: per-job product membership, relevance, trust and reasons.
 - PriceObservation: immutable price snapshots when a changed price is observed.
+- PriceAlert: price reductions that cross the saved minimum threshold, with read state and notification timestamp.
 - SavedSearch: opt-in watchlist with active state and next refresh timestamp.
 - SavedProduct: user's product shortlist.
 - UserPreference: categories, brands, colours, sizes, notes and default budget.

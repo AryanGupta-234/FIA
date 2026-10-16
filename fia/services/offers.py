@@ -25,3 +25,12 @@ def apply_price_evidence(product, item: dict) -> bool:
     product.offer_valid_until = item.get("offer_valid_until")
     product.availability = item.get("availability")
     return True
+
+
+def should_emit_price_alert(
+    drop_percent: float,
+    threshold_percent: float,
+    within_cooldown: bool,
+) -> bool:
+    """Apply the user's minimum-drop preference and avoid repeated alerts."""
+    return drop_percent >= max(0.0, threshold_percent) and not within_cooldown

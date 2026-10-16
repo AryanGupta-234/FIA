@@ -1,7 +1,7 @@
 import asyncio
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
 
@@ -18,9 +18,10 @@ from fia.models import (
     ResearchResult,
     RetailerEvidence,
     SavedProduct,
+    UserPreference,
 )
 from fia.services.normalize import canonicalize_url
-from fia.services.offers import apply_price_evidence
+from fia.services.offers import apply_price_evidence, should_emit_price_alert
 from fia.services.ranking import rank_product
 from fia.services.trust import assess_url
 
@@ -141,9 +142,19 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             row.description = (item.get("description") or row.description or "")[:4000]
             row.brand = item.get("brand") or row.brand
             row.category = job.category or row.category
+            row.product_type = item.get("product_type") or row.product_type
+            row.colour = item.get("colour") or row.colour
+            row.material = item.get("material") or row.material
+            row.fit = item.get("fit") or row.fit
+            row.size_label = item.get("size_label") or row.size_label
+            row.gender = item.get("gender") or row.gender
+            row.sku = item.get("sku") or row.sku
+            row.gtin = item.get("gtin") or row.gtin
             row.image_url = item.get("image_url") or row.image_url
             row.image_source = item.get("image_source") or row.image_source
             has_price_evidence = apply_price_evidence(row, item)
+            if has_price_evidence:
+                row.price_checked_at = datetime.now(UTC)
             row.seller_name = item.get("seller_name") or row.seller_name
             row.retailer_name = item.get("retailer_name") or row.retailer_name
             row.source = item["source"]
@@ -183,6 +194,7 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
 
             if (
                 previous_price is not None
+                and previous_price > 0
                 and row.price is not None
                 and previous_currency == row.currency
                 and previous_price - row.price > 0.01
@@ -191,15 +203,34 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
                 ) is not None
             ):
                 drop_percent = round((previous_price - row.price) / previous_price * 100, 1)
-                db.add(
-                    PriceAlert(
-                        product_id=row.id,
-                        previous_price=previous_price,
-                        current_price=row.price,
-                        currency=row.currency,
-                        drop_percent=drop_percent,
-                    )
+                preference = db.get(UserPreference, 1)
+                threshold = (
+                    preference.price_alert_threshold_percent
+                    if preference is not None
+                    else getattr(settings, "min_price_alert_drop_percent", 2.0)
                 )
+                cooldown_hours = max(0, getattr(settings, "price_alert_cooldown_hours", 24))
+                cooldown_since = datetime.now(UTC) - timedelta(hours=cooldown_hours)
+                recent_alert = (
+                    db.scalar(
+                        select(PriceAlert.id).where(
+                            PriceAlert.product_id == row.id,
+                            PriceAlert.created_at >= cooldown_since,
+                        ).limit(1)
+                    )
+                    if cooldown_hours > 0
+                    else None
+                )
+                if should_emit_price_alert(drop_percent, threshold, recent_alert is not None):
+                    db.add(
+                        PriceAlert(
+                            product_id=row.id,
+                            previous_price=previous_price,
+                            current_price=row.price,
+                            currency=row.currency,
+                            drop_percent=drop_percent,
+                        )
+                    )
             evidence = assess_url(item["canonical_url"])
             retailer = db.scalar(
                 select(RetailerEvidence).where(RetailerEvidence.domain == item["retailer_domain"])

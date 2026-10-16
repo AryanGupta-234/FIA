@@ -16,12 +16,12 @@
 - [ ] Coupon validity and shipping/return detail adapters
 - [ ] Seller-level marketplace evidence where the source exposes seller IDs
 - [x] In-app price-drop alerts for saved products when a lower same-currency price is observed
-- [ ] Price freshness expiry, stale badges and configurable alert thresholds
-- [ ] Product/SKU entity resolution across stores
+- [x] Price freshness timestamps, stale badges, fresh-only offer feed and configurable alert thresholds
+- [x] Exact validated GTIN matching across retailer listings (preserving independent offers and sellers)
 
 ## v0.4 — Fashion intelligence
 - [ ] Feedback-driven personal ranking
-- [ ] Normalized fit, material, colour, silhouette and size extraction
+- [x] Structured fit, material, colour, size, product type and audience extraction
 - [ ] Image embeddings for visually similar products
 - [ ] Outfit compatibility and wardrobe planning
 - [ ] Multilingual Indian query expansion

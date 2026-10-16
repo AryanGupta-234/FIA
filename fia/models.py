@@ -32,6 +32,14 @@ class Product(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     brand: Mapped[str | None] = mapped_column(String(160), nullable=True)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    product_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    colour: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    material: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    fit: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    size_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    gender: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    sku: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    gtin: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     image_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -48,6 +56,7 @@ class Product(Base):
     evidence_json: Mapped[str] = mapped_column(Text, default="{}")
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    price_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     observations: Mapped[list["PriceObservation"]] = relationship(
         back_populates="product", cascade="all, delete-orphan"
     )
@@ -118,6 +127,7 @@ class UserPreference(Base):
     sizes: Mapped[str] = mapped_column(Text, default="{}")
     style_notes: Mapped[str] = mapped_column(Text, default="")
     budget_default: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_alert_threshold_percent: Mapped[float] = mapped_column(Float, default=2.0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

@@ -1,6 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,7 +18,7 @@ class Settings(BaseSettings):
     brave_search_endpoint: str = "https://api.search.brave.com/res/v1/web/search"
     brave_images_endpoint: str = "https://api.search.brave.com/res/v1/images/search"
     search_result_count: int = 20
-    crawl_user_agent: str = "FIAResearchBot/0.2 (+https://github.com/AryanGupta-234/FIA)"
+    crawl_user_agent: str = "FIAResearchBot/0.3 (+https://github.com/AryanGupta-234/FIA)"
     crawl_timeout_seconds: float = 8.0
     crawl_max_bytes: int = 1_500_000
     crawl_max_pages_per_job: int = 8
@@ -24,6 +26,9 @@ class Settings(BaseSettings):
     auto_refresh_enabled: bool = True
     auto_refresh_interval_minutes: int = 360
     auto_refresh_poll_seconds: int = 60
+    price_stale_after_hours: int = Field(default=72, ge=1, le=8760)
+    price_alert_cooldown_hours: int = Field(default=24, ge=0, le=720)
+    min_price_alert_drop_percent: float = Field(default=2.0, ge=0, le=100)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
