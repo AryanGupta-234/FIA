@@ -62,7 +62,9 @@ def _offer_fields(offers) -> dict:
         "price": price,
         "original_price": original,
         "discount_percent": discount,
-        "currency": str(offers.get("priceCurrency") or price_spec.get("priceCurrency") or "INR")[:3].upper(),
+        "currency": str(
+            offers.get("priceCurrency") or price_spec.get("priceCurrency") or "INR"
+        )[:3].upper(),
         "availability": offers.get("availability"),
         "seller_name": (offers.get("seller") or {}).get("name")
         if isinstance(offers.get("seller"), dict)

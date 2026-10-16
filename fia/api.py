@@ -26,7 +26,11 @@ from fia.schemas import PreferenceUpdate, ResearchRequest, SavedSearchCreate, Sa
 settings = get_settings()
 
 
-def _product_payload(product: Product, result: ResearchResult | None = None, is_saved: bool = False):
+def _product_payload(
+    product: Product,
+    result: ResearchResult | None = None,
+    is_saved: bool = False,
+):
     try:
         evidence = json.loads(product.evidence_json or "{}")
     except json.JSONDecodeError:
@@ -94,7 +98,9 @@ def health():
         "provider": settings.search_provider,
         "mode": "research_only",
         "live_discovery": settings.search_provider != "demo",
-        "automatic_offer_refresh": settings.auto_refresh_enabled and settings.search_provider != "demo",
+        "automatic_offer_refresh": (
+            settings.auto_refresh_enabled and settings.search_provider != "demo"
+        ),
         "refresh_interval_minutes": settings.auto_refresh_interval_minutes,
         "version": app.version,
     }
@@ -163,7 +169,12 @@ def get_product(product_id: int):
         product = db.get(Product, product_id)
         if product is None:
             raise HTTPException(404, "Product not found")
-        saved = db.scalar(select(SavedProduct.id).where(SavedProduct.product_id == product_id)) is not None
+        saved = (
+            db.scalar(
+                select(SavedProduct.id).where(SavedProduct.product_id == product_id)
+            )
+            is not None
+        )
         history = db.scalars(
             select(PriceObservation).where(PriceObservation.product_id == product_id)
             .order_by(desc(PriceObservation.observed_at)).limit(30)
@@ -206,7 +217,9 @@ def list_offers(limit: int = Query(60, ge=1, le=200), q: str | None = None):
 @app.get("/api/v1/retailers")
 def list_retailers():
     with SessionLocal() as db:
-        rows = db.scalars(select(RetailerEvidence).order_by(desc(RetailerEvidence.updated_at))).all()
+        rows = db.scalars(
+            select(RetailerEvidence).order_by(desc(RetailerEvidence.updated_at))
+        ).all()
         return [
             {
                 "domain": row.domain,
@@ -222,7 +235,9 @@ def list_retailers():
 @app.get("/api/v1/history")
 def list_history(limit: int = Query(30, ge=1, le=100)):
     with SessionLocal() as db:
-        rows = db.scalars(select(ResearchJob).order_by(desc(ResearchJob.created_at)).limit(limit)).all()
+        rows = db.scalars(
+            select(ResearchJob).order_by(desc(ResearchJob.created_at)).limit(limit)
+        ).all()
         return [
             {
                 "job_id": row.id,

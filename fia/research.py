@@ -82,18 +82,26 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
                 "description": result.snippet,
                 "canonical_url": canonical,
                 "retailer_domain": host,
-                "source": result.source or ("demo" if settings.search_provider == "demo" else "brave_web"),
+                "source": result.source or (
+                    "demo" if settings.search_provider == "demo" else "brave_web"
+                ),
                 "currency": "INR",
                 "image_url": result.image_url,
                 "image_source": "search_thumbnail" if result.image_url else None,
             }
-            if fetch_pages and pages < settings.crawl_max_pages_per_job and settings.search_provider != "demo":
+            if (
+                fetch_pages
+                and pages < settings.crawl_max_pages_per_job
+                and settings.search_provider != "demo"
+            ): 
                 html, _message = await fetcher.fetch(canonical)
                 pages += 1
                 if html:
                     parsed = extract_product(html, canonical)
                     if parsed:
-                        item.update({key: value for key, value in parsed.items() if value not in (None, "")})
+                        item.update(
+                            {key: value for key, value in parsed.items() if value not in (None, "")}
+                        )
                         if parsed.get("image_url"):
                             item["image_source"] = "retailer_page"
             if not item.get("image_url"):
@@ -127,7 +135,12 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             row.price = item.get("price") if item.get("price") is not None else row.price
             row.original_price = item.get("original_price") or row.original_price
             row.discount_percent = item.get("discount_percent") or row.discount_percent
-            if row.discount_percent is None and row.price and row.original_price and row.original_price > row.price:
+            if (
+                row.discount_percent is None
+                and row.price
+                and row.original_price
+                and row.original_price > row.price
+            ): 
                 row.discount_percent = round((1 - row.price / row.original_price) * 100, 1)
             row.currency = item.get("currency") or row.currency or "INR"
             row.availability = item.get("availability") or row.availability
@@ -146,7 +159,10 @@ async def run_research(job_id: str, fetch_pages: bool, limit: int) -> None:
             row.last_seen = datetime.now(UTC)
             db.flush()
 
-            if row.price is not None and (previous_price is None or abs(previous_price - row.price) > 0.01):
+            if (
+                row.price is not None
+                and (previous_price is None or abs(previous_price - row.price) > 0.01)
+            ): 
                 db.add(
                     PriceObservation(
                         product_id=row.id,

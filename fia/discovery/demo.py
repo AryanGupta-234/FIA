@@ -9,7 +9,10 @@ class DemoSearchProvider:
             SearchResult(
                 title=f"Demo discovery: Contemporary everyday essentials — {query}",
                 url="https://www.myntra.com/demo-everyday-essentials",
-                snippet="DEMO DATA — illustrative search result; not a live product listing or price.",
+                snippet=(
+                    "DEMO DATA — illustrative search result; "
+                    "not a live product listing or price."
+                ),
                 source="demo",
             ),
             SearchResult(

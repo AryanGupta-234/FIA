@@ -13,7 +13,11 @@ def test_domain_matching_is_exact():
 
 
 def test_budget_affects_rank():
-    item = {"title": "White casual sneakers", "canonical_url": "https://myntra.com/shoe", "price": 2200}
+    item = {
+        "title": "White casual sneakers",
+        "canonical_url": "https://myntra.com/shoe",
+        "price": 2200,
+    }
     under = rank_product(item, "white sneakers", 3000)
     over = rank_product(item, "white sneakers", 1000)
     assert under["relevance_score"] > over["relevance_score"]

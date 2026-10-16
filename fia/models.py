@@ -71,8 +71,12 @@ class ResearchResult(Base):
     __tablename__ = "research_results"
     __table_args__ = (UniqueConstraint("job_id", "product_id", name="uq_research_job_product"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(ForeignKey("research_jobs.id", ondelete="CASCADE"), index=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("research_jobs.id", ondelete="CASCADE"), index=True
+    )
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
     relevance_score: Mapped[float] = mapped_column(Float, default=0)
     trust_score: Mapped[float] = mapped_column(Float, default=0)
     reasons_json: Mapped[str] = mapped_column(Text, default="[]")
@@ -117,6 +121,8 @@ class SavedSearch(Base):
 class SavedProduct(Base):
     __tablename__ = "saved_products"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), unique=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), unique=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     product: Mapped[Product] = relationship()

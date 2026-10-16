@@ -19,7 +19,9 @@ class RobotsPolicy:
             parser = RobotFileParser()
             parser.set_url(origin + "/robots.txt")
             try:
-                async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as client:
+                async with httpx.AsyncClient(
+                    timeout=self.timeout, follow_redirects=False
+                ) as client:
                     response = await client.get(
                         origin + "/robots.txt", headers={"User-Agent": self.user_agent}
                     )

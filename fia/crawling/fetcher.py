@@ -47,7 +47,10 @@ class PageFetcher:
                     if response.status_code != 200:
                         return None, f"HTTP {response.status_code}"
                     content_type = response.headers.get("content-type", "").lower()
-                    if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
+                    if (
+                        "text/html" not in content_type
+                        and "application/xhtml+xml" not in content_type
+                    ):
                         return None, "Non-HTML content skipped"
                     declared_size = response.headers.get("content-length")
                     if declared_size and int(declared_size) > self.settings.crawl_max_bytes:
