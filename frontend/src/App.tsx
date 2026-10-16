@@ -210,7 +210,7 @@ function ProductCard({
           <del>{money(product.original_price, product.currency)}</del>}
       </div>
       <div className="product-meta-row">
-        <span>{product.availability?.split("/").pop()?.replaceAll("_", " ") || "Check availability"}</span>
+        <span>{product.availability?.split("/").pop()?.replace(/_/g, " ") || "Check availability"}</span>
         <span>{product.last_seen ? relativeTime(product.last_seen) : "Recently found"}</span>
       </div>
       {!compact && product.offer_label && <div className="offer-proof"><Tag size={12} /> {product.offer_label}</div>}
