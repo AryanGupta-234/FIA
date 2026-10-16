@@ -18,13 +18,19 @@ class DemoSearchProvider:
             SearchResult(
                 title=f"Demo discovery: Minimal wardrobe edit — {query}",
                 url="https://www.ajio.com/demo-minimal-wardrobe",
-                snippet="DEMO DATA — illustrative search result; not a live product listing or price.",
+                snippet=(
+                    "DEMO DATA — illustrative search result; "
+                    "not a live product listing or price."
+                ),
                 source="demo",
             ),
             SearchResult(
                 title=f"Demo discovery: Modern casual collection — {query}",
                 url="https://www.amazon.in/demo-modern-casual",
-                snippet="DEMO DATA — illustrative search result; not a live product listing or price.",
+                snippet=(
+                    "DEMO DATA — illustrative search result; "
+                    "not a live product listing or price."
+                ),
                 source="demo",
             ),
         ]
