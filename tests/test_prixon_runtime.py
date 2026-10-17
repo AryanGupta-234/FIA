@@ -292,3 +292,34 @@ def test_read_only_queries_execute_without_an_execute_flag(store):
         assert "RAM usage" in result["answer"]
     finally:
         runtime.executor.shutdown()
+
+
+def test_check_if_application_is_running_accepts_the_grammar():
+    router = IntentRouter()
+    assert router.route("check if chrome is running").selected_action == "app.is_running"
+    assert router.route("is discord open").selected_action == "app.is_running"
+
+
+def test_unrelated_followup_does_not_erase_pending_learning(store):
+    from prixon.runtime import AgentRuntime
+
+    runtime = AgentRuntime(store=store)
+    try:
+        store.queue_learning_signal("show RAM usage", "system.memory", "session-x", "read_only")
+        assert runtime._discard_rephrased_pending_learning("show CPU usage", "session-x") == 0
+        assert len(store.pending_learning_signals()) == 1
+    finally:
+        runtime.executor.shutdown()
+
+
+def test_explicit_rephrase_cancels_pending_learning_and_adds_negative(store):
+    from prixon.runtime import AgentRuntime
+
+    runtime = AgentRuntime(store=store)
+    try:
+        store.queue_learning_signal("open notepad", "app.launch", "session-x", "reversible")
+        assert runtime._discard_rephrased_pending_learning("no, I meant calculator", "session-x") == 1
+        assert store.pending_learning_signals() == []
+        assert store.negative_examples()[0]["action_name"] == "app.launch"
+    finally:
+        runtime.executor.shutdown()
