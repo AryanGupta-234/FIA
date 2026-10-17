@@ -195,6 +195,64 @@ class WindowsActionAdapters:
             "automation_tier": "ui_automation",
         }
 
+    def describe_window_controls(
+        self, hwnd: int, limit: int = 12,
+    ) -> list[dict[str, str]]:
+        """Return a tiny safe summary of actionable UIA controls, never form/text values."""
+        if os.name != "nt" or not hwnd:
+            return []
+        windows = self.perception.open_windows(limit=100)
+        target = next((item for item in windows if item.get("handle") == int(hwnd)), None)
+        if target is None or target.get("sensitive"):
+            return []
+        try:
+            from pywinauto import Application
+            app = Application(backend="uia").connect(handle=int(hwnd), timeout=1)
+            window = app.window(handle=int(hwnd))
+            controls = window.descendants()
+        except Exception:
+            return []
+
+        allowed_roles = {
+            "Button", "MenuItem", "TabItem", "CheckBox", "RadioButton", "SplitButton",
+        }
+        blocked_terms = (
+            "password", "credential", "sign in", "log in", "login", "pin",
+            "security", "authenticator", "account number", "credit card",
+        )
+        result: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for control in controls[:120]:
+            try:
+                if not control.is_visible():
+                    continue
+                info = control.element_info
+                role = str(info.control_type or "")
+                if role not in allowed_roles:
+                    continue
+                name = str(info.name or "").strip()
+                if (
+                    not name or len(name) > 90
+                    or any(term in name.casefold() for term in blocked_terms)
+                    or self.perception._is_sensitive_title(name)
+                ):
+                    continue
+                automation_id = str(info.automation_id or "")[:64]
+                item = (role, name, automation_id)
+                if item in seen:
+                    continue
+                seen.add(item)
+                result.append({
+                    "role": role,
+                    "name": name,
+                    "automation_id": automation_id,
+                })
+                if len(result) >= max(1, min(int(limit), 12)):
+                    break
+            except Exception:
+                continue
+        return result
+
     def _execute_keyboard(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
         self._require_windows()
         if action not in {"window.minimize", "window.maximize", "window.restore"}:
