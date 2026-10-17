@@ -54,7 +54,7 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
       <div class="top-actions"><div id="statusPill" class="top-status"><span class="dot"></span><span id="statusText">Connecting…</span></div><button class="btn subtle" id="refreshBtn">↻ Refresh</button></div>
     </header>
     <section id="view-overview" class="view active">
-      <div class="hero"><div class="hero-row"><div><div class="eyebrow">Your local intelligence layer</div><h1>Your Windows environment, under intelligent control.</h1><p>Grounded actions, live machine context and bounded autonomy—running locally, with confirmation at the risk boundary.</p></div><div class="hero-buttons"><button class="btn primary" data-jump="command">Open Command Center</button><button class="btn danger" id="killBtn">Stop Agent</button></div></div></div>
+      <div class="hero"><div class="hero-row"><div><div class="eyebrow">Your local intelligence layer</div><h1>Your Windows environment, under intelligent control.</h1><p>Grounded actions, live machine context and bounded autonomy—running locally, with confirmation at the risk boundary.</p></div><div class="hero-buttons"><button class="btn primary" data-jump="command">Open Command Center</button><button class="btn" id="startBtn">Start Agent</button><button class="btn danger" id="killBtn">Stop Agent</button></div></div></div>
       <div class="grid">
         <div class="metric"><div class="metric-label">CPU LOAD</div><div class="metric-value" id="cpuValue">—</div><div class="metric-foot">Current system usage</div></div>
         <div class="metric"><div class="metric-label">MEMORY</div><div class="metric-value" id="memoryValue">—</div><div class="metric-foot">Physical RAM utilization</div></div>
@@ -195,6 +195,7 @@ $("refreshBtn").addEventListener("click",()=>refreshAll());
 $("goalRefresh").addEventListener("click",()=>refreshGoals());
 $("auditRefresh").addEventListener("click",()=>refreshAudit());
 $("killBtn").addEventListener("click",async()=>{try{await request("/kill",{method:"POST",body:"{}"});await refreshAll();}catch(e){alert(e.message);}});
+$("startBtn").addEventListener("click",async()=>{try{await request("/runtime/start",{method:"POST",body:"{}"});await refreshAll();}catch(e){alert(e.message);}});
 refreshAll().catch(e=>{$("statusText").textContent="API unavailable";console.error(e);});
 setInterval(()=>refreshAll().catch(()=>{}),12000);
 </script>
