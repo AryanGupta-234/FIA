@@ -1230,6 +1230,13 @@ class AgentRuntime:
 
     @staticmethod
     def format_observation(action_name: str, output: dict[str, Any]) -> str:
+        if action_name == "office.status":
+            total = int(output.get("open_document_count", 0))
+            unsaved = int(output.get("unsaved_document_count", 0))
+            return (
+                f"Office has {total} open document(s) across active Word, Excel and PowerPoint sessions; "
+                f"{unsaved} document(s) report unsaved changes. Document names and contents were not read."
+            )
         if action_name == "media.status":
             state = str(output.get("playback_status", "unknown")).replace("_", " ")
             app_id = str(output.get("session_app_id") or "current media session")

@@ -75,6 +75,14 @@ def compare_expected(
                 isinstance(observed.get("text"), str)
                 and observed.get("content_read_explicitly") is True
             )
+        elif "office_state_returned" in key:
+            matched += int(
+                observed.get("automation_available") is True
+                and "open_document_count" in observed
+                and "unsaved_document_count" in observed
+                and observed.get("content_read") is False
+                and observed.get("names_or_paths_read") is False
+            )
         elif "media_status_returned" in key:
             matched += int(
                 observed.get("session_available") is True
