@@ -476,6 +476,14 @@ class AgentStore:
         with self.connect() as db:
             db.execute("DELETE FROM aliases WHERE phrase=?", (normalized,))
 
+    def remove_alias_if_implicit(self, phrase: str) -> bool:
+        normalized = " ".join(phrase.casefold().split())
+        with self.connect() as db:
+            cursor = db.execute(
+                "DELETE FROM aliases WHERE phrase=? AND explicit=0", (normalized,),
+            )
+            return cursor.rowcount > 0
+
     def remove_alias_candidate(self, phrase: str, target: str | None = None) -> int:
         normalized = " ".join(phrase.casefold().split())
         with self.connect() as db:
