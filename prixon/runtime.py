@@ -271,12 +271,18 @@ class AgentRuntime:
 
     @staticmethod
     def split_compound(text: str) -> list[str]:
-        parts = re.split(
-            r"\s+(?:and then|then|after that)\s+|\s+and\s+(?=(?:open|launch|start|"
-            r"minimize|restore|set|check|show|list|quarantine)\b)",
-            text, flags=re.IGNORECASE,
+        # Split only when the next phrase begins with a registered-action verb;
+        # conjunctions inside application names and ordinary noun phrases stay intact.
+        separators = (
+            r"\s*(?:;|\b(?:and then|then|after that)\b)\s*"
+            r"|\s+and\s+(?=(?:open|launch|start|run|"
+            r"minimize|maximize|restore|close|bring|focus|"
+            r"set|change|adjust|mute|unmute|raise|lower|"
+            r"check|show|list|inspect|read|quarantine|"
+            r"move|copy|rename|delete)\b)"
         )
-        return [part.strip(" ,.") for part in parts if part.strip(" ,.")]
+        parts = re.split(separators, text, flags=re.IGNORECASE)
+        return [part.strip(" ,.;") for part in parts if part.strip(" ,.;")]
 
     def _fill_args(
         self, action_name: str, text: str, supplied: dict[str, Any] | None = None,
