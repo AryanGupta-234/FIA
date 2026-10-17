@@ -47,6 +47,11 @@ async def agent_health() -> dict[str, Any]:
         "ollama": model_status,
         "registered_actions": len(runtime.registry.all()),
         "semantic_retrieval": runtime.semantic is not None,
+        "browser_debug": {
+            "enabled": runtime.settings.browser_debug_enabled,
+            "port": runtime.settings.browser_debug_port,
+            "mode": "loopback_metadata_only",
+        },
         "loop_running": agent_loop.running,
         "kill_switch_active": runtime.kill_switch.active,
         "execution_enabled": True,
