@@ -536,3 +536,50 @@ def test_successful_implicit_alias_never_auto_activates(tmp_path):
     )
     assert approved.status == "promoted"
     assert store.alias("open my editor")["explicit"] is True
+
+
+def test_run_endpoint_preview_never_executes_read_only_action(tmp_path):
+    import asyncio
+
+    class FakePerception:
+        def snapshot(self):
+            return {
+                "platform": "test", "is_windows": False, "captured_at": 1,
+                "cpu_percent": 5, "memory": {"total_bytes": 100, "available_bytes": 50, "percent": 50},
+                "battery": None, "network": {}, "foreground_window": None, "process_count": 2,
+            }
+        def processes(self, limit=100):
+            return []
+        def installed_apps(self):
+            return []
+        def known_folders(self):
+            return []
+        def recent_files(self, limit=100):
+            return []
+
+    class FakeOllama:
+        last_metrics = {}
+        model = "test"
+        async def health(self):
+            return {"available": False}
+
+    store = AgentStore(tmp_path / "preview-only.sqlite3")
+    runtime = AgentRuntime(
+        store=store, perception=FakePerception(), ollama=FakeOllama(),
+    )
+    called = []
+    runtime.executor.execute_action = lambda *args, **kwargs: called.append(args) or None
+    try:
+        result = asyncio.run(runtime.run_request("check battery", execute=False))
+        assert result["status"] == "selected"
+        assert result["plan"]["steps"][0]["tool"] == "system.battery"
+        assert called == []
+    finally:
+        runtime.executor.shutdown()
+
+
+def test_router_application_slot_and_level_slot_require_valid_values():
+    router = IntentRouter(ActionRegistry())
+    assert router.route("open calculator").selected_action == "app.launch"
+    assert router.route("set volume to 30").selected_action == "volume.set"
+    assert router.route("set volume to 250").selected_action == "volume.set"
