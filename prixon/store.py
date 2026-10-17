@@ -114,6 +114,11 @@ class AgentStore:
                     approved INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS agent_settings (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
             """)
 
     def audit(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -319,6 +324,84 @@ class AgentStore:
             posterior = (successes + 1) / (successes + failures + 2)
             return {"phrase": normalized, "target": target, "successes": successes,
                     "failures": failures, "sessions": sessions, "confidence": posterior}
+
+    def remove_alias(self, phrase: str) -> None:
+        normalized = " ".join(phrase.casefold().split())
+        with self.connect() as db:
+            db.execute("DELETE FROM aliases WHERE phrase=?", (normalized,))
+
+    def undo_record(self, undo_id: str) -> dict[str, Any] | None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM undo_journal WHERE id=?", (undo_id,)).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": row["id"], "action_name": row["action_name"],
+                "args": json.loads(row["args_json"]),
+                "before_state": json.loads(row["before_state_json"]),
+                "status": row["status"],
+            }
+
+    def set_setting(self, key: str, value: Any) -> None:
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO agent_settings(key,value_json,updated_at) VALUES(?,?,?)
+                   ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,
+                   updated_at=excluded.updated_at""",
+                (key, json.dumps(value, default=str), time.time()),
+            )
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        with self.connect() as db:
+            row = db.execute("SELECT value_json FROM agent_settings WHERE key=?", (key,)).fetchone()
+            return json.loads(row["value_json"]) if row else default
+
+    def record_macro(
+        self, shape_hash: str, name: str, plan: dict[str, Any], trigger: str,
+        *, approved: bool = False,
+    ) -> None:
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM macros WHERE shape_hash=?", (shape_hash,)).fetchone()
+            phrases = json.loads(row["trigger_phrases_json"]) if row else []
+            successes = int(row["successes"]) if row else 0
+            if trigger and trigger not in phrases:
+                phrases.append(trigger)
+            successes += 1
+            db.execute(
+                """INSERT INTO macros(shape_hash,name,plan_json,trigger_phrases_json,successes,approved,updated_at)
+                   VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(shape_hash) DO UPDATE SET successes=excluded.successes,
+                   trigger_phrases_json=excluded.trigger_phrases_json,
+                   approved=MAX(macros.approved,excluded.approved),updated_at=excluded.updated_at""",
+                (shape_hash, name, json.dumps(plan, default=str), json.dumps(phrases),
+                 successes, int(approved), time.time()),
+            )
+
+    def approved_macros(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM macros WHERE approved=1 ORDER BY successes DESC"
+            ).fetchall()
+            return [
+                {"shape_hash": row["shape_hash"], "name": row["name"],
+                 "plan": json.loads(row["plan_json"]),
+                 "trigger_phrases": json.loads(row["trigger_phrases_json"]),
+                 "successes": row["successes"]}
+                for row in rows
+            ]
+
+    def recent_episodes(self, limit: int = 3) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM episodes WHERE outcome='success' ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                {"id": row["id"], "utterance": row["utterance"],
+                 "plan": json.loads(row["plan_json"]),
+                 "layer_path": json.loads(row["layer_path_json"])}
+                for row in rows
+            ]
 
     def audit_rows(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as db:
