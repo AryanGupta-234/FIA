@@ -196,3 +196,92 @@ class WindowsOfficeAdapter:
         if action != "office.status":
             raise ValueError(f"Office action is not registered: {action}")
         return self.status()
+
+
+class ChromiumDebugAdapter:
+    """Loopback-only Chromium diagnostics; never reads URLs, titles or page contents."""
+
+    def __init__(self, *, enabled: bool = False, port: int = 9222) -> None:
+        self.enabled = bool(enabled)
+        self.port = max(1024, min(int(port), 65535))
+
+    def status(self) -> dict[str, Any]:
+        if not self.enabled:
+            raise PermissionError("Browser debugging adapter is disabled by configuration.")
+
+        import json
+        import urllib.request
+        from urllib.parse import urlsplit
+
+        version_url = f"http://127.0.0.1:{self.port}/json/version"
+        request = urllib.request.Request(
+            version_url,
+            headers={"Accept": "application/json", "User-Agent": "PrixonLocalDiagnostics/1.0"},
+        )
+        with urllib.request.urlopen(request, timeout=2.0) as response:
+            if response.status != 200:
+                raise ConnectionError("Local browser debug endpoint returned a non-200 response.")
+            version = json.loads(response.read(64 * 1024).decode("utf-8"))
+
+        websocket_url = str(version.get("webSocketDebuggerUrl") or "")
+        parsed = urlsplit(websocket_url)
+        if (
+            parsed.scheme != "ws"
+            or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.port != self.port
+            or parsed.username is not None
+            or parsed.password is not None
+            or not parsed.path.startswith("/devtools/browser/")
+        ):
+            raise PermissionError("Browser debugging websocket did not resolve to the configured loopback port.")
+
+        try:
+            from websockets.sync.client import connect
+        except ImportError as exc:
+            raise RuntimeError(
+                "Browser debugging requires the optional .[browser] websocket dependency."
+            ) from exc
+
+        with connect(
+            websocket_url,
+            open_timeout=2.0,
+            close_timeout=1.0,
+            max_size=64 * 1024,
+            compression=None,
+        ) as socket:
+            def command(command_id: int, method: str) -> dict[str, Any]:
+                socket.send(json.dumps({"id": command_id, "method": method}))
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    message = json.loads(socket.recv(timeout=max(0.1, deadline - time.monotonic())))
+                    if message.get("id") == command_id:
+                        if message.get("error"):
+                            raise RuntimeError(f"Chromium debugging command failed: {method}")
+                        return message.get("result") or {}
+                raise TimeoutError(f"Chromium debugging command timed out: {method}")
+
+            browser_info = command(1, "Browser.getVersion")
+            targets = command(2, "Target.getTargets").get("targetInfos", [])
+            target_counts: dict[str, int] = {}
+            for item in targets:
+                kind = str(item.get("type") or "other")[:32]
+                target_counts[kind] = target_counts.get(kind, 0) + 1
+
+        return {
+            "enabled": True,
+            "reachable": True,
+            "port": self.port,
+            "browser_product": str(browser_info.get("product") or "Chromium")[:100],
+            "protocol_version": str(browser_info.get("protocolVersion") or "")[:40],
+            "target_count": sum(target_counts.values()),
+            "target_type_counts": target_counts,
+            "metadata_only": True,
+            "urls_read": False,
+            "titles_read": False,
+            "page_content_read": False,
+        }
+
+    def execute(self, action: str, _args: dict[str, Any] | None = None) -> dict[str, Any]:
+        if action != "browser.debug_status":
+            raise ValueError(f"Browser action is not registered: {action}")
+        return self.status()
