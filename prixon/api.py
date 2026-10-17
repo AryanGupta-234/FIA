@@ -103,7 +103,12 @@ def teach_action_alias(payload: TeachAliasRequest) -> dict[str, Any]:
     action = runtime.registry.get(payload.action_name)
     if action is None:
         raise HTTPException(404, "Unknown registered action.")
-    result = runtime.lexicon.teach(payload.phrase, payload.action_name, scope=payload.scope)
+    try:
+        result = runtime.lexicon.teach(
+            payload.phrase, payload.action_name, scope=payload.scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {
         "status": result.status,
         "phrase": result.phrase,
@@ -176,10 +181,13 @@ def record_owner_feedback(payload: AliasFeedbackRequest) -> dict[str, Any]:
         corrected = runtime.registry.get(payload.corrected_action)
         if corrected is None:
             raise HTTPException(404, "Unknown corrected action.")
-        result = runtime.lexicon.correct(
-            payload.phrase, payload.action_name, payload.corrected_action,
-            scope=payload.scope,
-        )
+        try:
+            result = runtime.lexicon.correct(
+                payload.phrase, payload.action_name, payload.corrected_action,
+                scope=payload.scope,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     else:
         result = runtime.lexicon.observe(
             payload.phrase,

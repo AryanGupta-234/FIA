@@ -600,13 +600,59 @@ class AgentStore:
                 for row in rows.fetchall()
             ]
 
+    @staticmethod
+    def normalize_alias_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
+        """Validate the supported contextual language scopes and canonicalize values."""
+        if scope is None:
+            return {}
+        if not isinstance(scope, dict):
+            raise ValueError("Alias scope must be an object.")
+        allowed = {"foreground_app", "hour", "weekday", "time_of_day"}
+        unknown = set(scope) - allowed
+        if unknown:
+            raise ValueError("Unsupported alias scope field(s): " + ", ".join(sorted(unknown)))
+
+        normalized: dict[str, Any] = {}
+        for key, value in scope.items():
+            values = value if isinstance(value, list) else [value]
+            if not values or len(values) > 8:
+                raise ValueError(f"Alias scope '{key}' must contain between 1 and 8 values.")
+            if key == "foreground_app":
+                cleaned = [" ".join(str(item).casefold().split()) for item in values]
+                if any(not item or len(item) > 180 for item in cleaned):
+                    raise ValueError("Foreground-app scope values must be 1–180 characters.")
+                normalized[key] = cleaned if isinstance(value, list) else cleaned[0]
+            elif key == "hour":
+                if any(
+                    isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 23
+                    for item in values
+                ):
+                    raise ValueError("Hour scope values must be integers from 0 through 23.")
+                normalized[key] = list(values) if isinstance(value, list) else values[0]
+            elif key == "weekday":
+                allowed_days = {
+                    "monday", "tuesday", "wednesday", "thursday",
+                    "friday", "saturday", "sunday",
+                }
+                cleaned = [str(item).casefold().strip() for item in values]
+                if any(item not in allowed_days for item in cleaned):
+                    raise ValueError("Weekday scope values must be weekday names.")
+                normalized[key] = cleaned if isinstance(value, list) else cleaned[0]
+            elif key == "time_of_day":
+                allowed_periods = {"morning", "afternoon", "evening", "night"}
+                cleaned = [str(item).casefold().strip() for item in values]
+                if any(item not in allowed_periods for item in cleaned):
+                    raise ValueError("Time-of-day scope values must be morning, afternoon, evening or night.")
+                normalized[key] = cleaned if isinstance(value, list) else cleaned[0]
+        return normalized
+
     def put_alias(
         self, phrase: str, target_type: str, target: str,
         scope: dict[str, Any] | None = None, confidence: float = 1.0,
         explicit: bool = False,
     ) -> None:
         normalized = " ".join(phrase.casefold().split())
-        scope_value = dict(scope or {})
+        scope_value = self.normalize_alias_scope(scope)
         scope_json = json.dumps(scope_value, ensure_ascii=False, sort_keys=True)
         scope_key = json.dumps(
             scope_value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
@@ -717,8 +763,9 @@ class AgentStore:
             if scope is None:
                 cursor = db.execute("DELETE FROM aliases WHERE phrase=?", (normalized,))
             else:
+                normalized_scope = self.normalize_alias_scope(scope)
                 scope_key = json.dumps(
-                    dict(scope), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                    normalized_scope, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
                 )
                 cursor = db.execute(
                     "DELETE FROM aliases WHERE phrase=? AND scope_key=?",
