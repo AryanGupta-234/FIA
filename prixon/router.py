@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from prixon.registry import ActionRegistry
-from prixon.schemas import Candidate, IntentClass, RouteResult, RiskTier
+from prixon.schemas import Candidate, IntentClass, RiskTier, RouteResult
 
 
 def normalize(text: str) -> str:
