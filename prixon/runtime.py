@@ -506,7 +506,7 @@ class AgentRuntime:
         thresholds["always_confirm"] = 1.01
         return thresholds
 
-    def _self._meets_risk_threshold(self, score: float, risk_tier: str) -> bool:
+    def _meets_risk_threshold(self, score: float, risk_tier: str) -> bool:
         return meets_risk_threshold(score, risk_tier, self._active_risk_thresholds())
 
     def _record_decision(
