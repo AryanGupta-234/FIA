@@ -255,7 +255,7 @@ class AgentRuntime:
         }
         return dict(self._entity_refresh_result)
 
-    def situation(self) -> dict[str, Any]:
+    def situation(self, *, include_ui_controls: bool = False) -> dict[str, Any]:
         snapshot = self.perception.snapshot()
         foreground = snapshot.get("foreground_window")
         if foreground and foreground.get("sensitive"):
@@ -272,7 +272,7 @@ class AgentRuntime:
             for item in (snapshot.get("open_windows") or [])
             if not item.get("sensitive")
         ][:30]
-        return {
+        situation = {
             "foreground_app": foreground,
             "open_windows": windows,
             "system": {
@@ -287,6 +287,13 @@ class AgentRuntime:
                 "hour": datetime.now().astimezone().hour,
             },
         }
+        if include_ui_controls and foreground and foreground.get("handle"):
+            controls = self.executor.adapters.describe_window_controls(
+                int(foreground["handle"]), limit=12,
+            )
+            if controls:
+                situation["ui_controls"] = controls
+        return situation
 
     @staticmethod
     def split_compound(text: str) -> list[str]:
@@ -391,11 +398,21 @@ class AgentRuntime:
         # Arbitration is only permitted when deterministic retrieval has grounded candidates.
         actions = [candidate.action for candidate in route.candidates[:5]]
         return [
-            {"name": action.name, "description": action.description,
-             "examples": list(action.examples[:3]),
-             "required_slots": list(action.required_slots),
-             "risk": action.risk.value,
-             "hard_negatives": list(action.hard_negatives[:3])}
+            {
+                "name": action.name,
+                "description": action.description,
+                "examples": list(action.examples[:3]),
+                "verb_type": action.verb_type,
+                "target_type": action.target_type,
+                "parameter_schema": dict(action.parameter_schema),
+                "required_slots": list(action.required_slots),
+                "preconditions": list(action.preconditions),
+                "postconditions": list(action.postconditions),
+                "risk": action.risk.value,
+                "undo_supported": action.undo_supported,
+                "automation_tiers": list(action.automation_tiers),
+                "hard_negatives": list(action.hard_negatives[:3]),
+            }
             for action in actions
         ]
 
@@ -500,9 +517,17 @@ class AgentRuntime:
         if route.status != "selected":
             tools = self._shortlist(route)
             if tools:
+                include_ui_controls = any(
+                    candidate.action.target_type == "window"
+                    and "ui_automation" in candidate.action.automation_tiers
+                    for candidate in route.candidates[:5]
+                )
+                arbitration_situation = self.situation(
+                    include_ui_controls=include_ui_controls,
+                )
                 try:
                     arbitration = await self.ollama.arbitrate(
-                        text, tools, self.situation(), self.store.recent_episodes(3),
+                        text, tools, arbitration_situation, self.store.recent_episodes(3),
                     )
                     action = self.registry.get(str(arbitration.get("action")))
                     if action:
@@ -523,7 +548,7 @@ class AgentRuntime:
                             }
                         if confidence_hint < 0.65:
                             second = await self.ollama.arbitrate(
-                                text, tools, self.situation(), self.store.recent_episodes(3),
+                                text, tools, arbitration_situation, self.store.recent_episodes(3),
                                 temperature=0.1,
                             )
                             if second.get("clarification") or second.get("action") != arbitration.get("action"):
@@ -795,7 +820,6 @@ class AgentRuntime:
         self, original: str, clauses: list[str], args: dict[str, Any], *,
         execute: bool, confirmed: bool, session_id: str,
     ) -> dict[str, Any]:
-        situation = self.situation()
         clause_routes = [IntentRouter(self.registry, self.store).route(clause) for clause in clauses]
         if any(not route.candidates for route in clause_routes):
             return {
@@ -813,12 +837,28 @@ class AgentRuntime:
                 shortlist_by_name.setdefault(candidate.action.name, candidate.action)
         actions = list(shortlist_by_name.values())[:5]
         tools = [
-            {"name": item.name, "description": item.description,
-             "required_slots": list(item.required_slots), "risk": item.risk.value,
-             "examples": list(item.examples[:3]),
-             "hard_negatives": list(item.hard_negatives[:3])}
+            {
+                "name": item.name,
+                "description": item.description,
+                "required_slots": list(item.required_slots),
+                "parameter_schema": dict(item.parameter_schema),
+                "verb_type": item.verb_type,
+                "target_type": item.target_type,
+                "preconditions": list(item.preconditions),
+                "postconditions": list(item.postconditions),
+                "risk": item.risk.value,
+                "undo_supported": item.undo_supported,
+                "automation_tiers": list(item.automation_tiers),
+                "examples": list(item.examples[:3]),
+                "hard_negatives": list(item.hard_negatives[:3]),
+            }
             for item in actions
         ]
+        include_ui_controls = any(
+            item.target_type == "window" and "ui_automation" in item.automation_tiers
+            for item in actions
+        )
+        situation = self.situation(include_ui_controls=include_ui_controls)
         try:
             model_plan = await self.ollama.create_plan(
                 original, tools, situation, self.settings.agent_max_plan_steps,
