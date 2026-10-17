@@ -108,6 +108,7 @@ class EntityIndex:
                 or self._alias_target_exists(alias["target_type"], alias["target"])
             )
             if scope_matches and target_exists:
+                self.store.mark_entity_used(alias["target_type"], alias["target"])
                 return {
                     "kind": alias["target_type"],
                     "name": mention,
@@ -139,6 +140,22 @@ class EntityIndex:
                     self._vectors[key] = vector
                 semantic_score = cosine(query_vector, vector)
                 score = (0.6 * semantic_score) + (0.4 * fuzzy_score)
+            # Owner interaction recency is stronger than passive entity refresh time.
+            metadata = entity.get("metadata") or {}
+            last_used = float(metadata.get("last_used_at") or 0.0)
+            if last_used > 0:
+                age_seconds = max(0.0, time.time() - last_used)
+                recency = 0.045 * (0.5 ** (age_seconds / 900.0))
+                score = min(1.0, score + recency)
+            use_count = max(0, int(metadata.get("use_count") or 0))
+            if use_count:
+                score = min(1.0, score + min(0.025, 0.005 * math.log2(use_count + 1)))
+            context_app = str((context or {}).get("foreground_app") or "").casefold().strip()
+            entity_process = str(metadata.get("process") or "").casefold().strip()
+            if context_app and entity_process and (
+                context_app in entity_process or entity_process in context_app
+            ):
+                score = min(1.0, score + 0.035)
             if context_target and entity["target"] == context_target:
                 score = min(1.0, score + 0.04)
             if score > best_score:
@@ -147,6 +164,7 @@ class EntityIndex:
                 runner_up = score
         if best is None or best_score < threshold or best_score - runner_up < 0.06:
             return None
+        self.store.mark_entity_used(best["kind"], str(best["target"]))
         return {
             "kind": best["kind"], "name": best["name"], "target": best["target"],
             "score": best_score,
