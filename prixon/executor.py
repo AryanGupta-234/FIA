@@ -943,16 +943,25 @@ class ActionExecutor:
                         step.tool, resolved_args, confirmed=confirmed, confidence=step.confidence,
                         utterance=plan.goal, session_id=session_id,
                     )
+            from prixon.verifier import compare_expected
+            expectation = compare_expected(
+                step.expected_outcome,
+                action_result.output,
+                action=step.tool,
+            )
+            postconditions_verified = action_result.verified and expectation.verified
             item = {
                 "index": index, "action": action_result.action,
-                "success": action_result.success, "verified": action_result.verified,
+                "success": action_result.success,
+                "verified": postconditions_verified,
+                "action_verified": action_result.verified,
+                "expected_observed_verified": expectation.verified,
+                "verification_reason": expectation.reason,
                 "args": resolved_args,
                 "output": action_result.output, "error": action_result.error,
                 "undo_id": action_result.undo_id,
                 "expected_outcome": step.expected_outcome,
-                "prediction_error": (
-                    0.0 if action_result.verified else 1.0
-                ),
+                "prediction_error": expectation.prediction_error,
             }
             results.append(item)
             if not action_result.success:

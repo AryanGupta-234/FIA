@@ -39,6 +39,17 @@ def compare_expected(
             matched += int("processes" in observed)
         elif "application_running_state_returned" in key:
             matched += int("running" in observed)
+        elif "memory_snapshot_returned" in key:
+            matched += int(
+                "total_bytes" in observed and "available_bytes" in observed
+                and "percent" in observed
+            )
+        elif "cpu_snapshot_returned" in key:
+            matched += int("cpu_percent" in observed and "logical_cores" in observed)
+        elif "wifi_status_returned" in key:
+            matched += int("connected" in observed and "adapters" in observed)
+        elif "audio_level_returned" in key:
+            matched += int(observed.get("volume") is not None)
         elif "battery_snapshot_returned" in key:
             matched += int("battery" in observed)
         elif "network_snapshot_returned" in key:
@@ -55,6 +66,15 @@ def compare_expected(
             matched += int(observed.get("volume") is not None)
         elif "settings_page_opened" in key:
             matched += int(bool(observed.get("opened_setting")))
+        elif "clipboard_metadata_returned" in key:
+            matched += int(
+                "formats" in observed and observed.get("content_read") is False
+            )
+        elif "clipboard_text_returned_without_persistence" in key:
+            matched += int(
+                isinstance(observed.get("text"), str)
+                and observed.get("content_read_explicitly") is True
+            )
         elif "file_in_quarantine" in key:
             matched += int(bool(observed.get("quarantined_path")))
         elif "window_closed_or_close_prompt_shown" in key:
