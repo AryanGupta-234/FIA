@@ -42,7 +42,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 ### Evaluation/performance
 - Frozen + growing JSONL intent benchmark, including wrong-selection rate separately from safe abstention.
 - Offline confidence-weight fitting.
-- Prompt/response size, latency, load-duration and keep-alive logging with rolling p50/p95 summaries.
+- Prompt/response size, latency, load-duration and keep-alive logging with rolling p50/p95 summaries; failed Ollama attempts are included in call and latency metrics.
 - Preview-only target-machine benchmark CLI for end-to-end latency, LLM-call share and token measurements.
 
 ## Target-machine benchmark

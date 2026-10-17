@@ -56,6 +56,11 @@ class OllamaClient:
         return {
             "total_calls": self.call_count,
             "retained_samples": len(calls),
+            "failed_calls": sum(not item.get("success", True) for item in calls),
+            "success_rate": (
+                round(sum(bool(item.get("success", True)) for item in calls) / len(calls), 4)
+                if calls else None
+            ),
             "latency_p50_ms": percentile(latency, 0.50),
             "latency_p95_ms": percentile(latency, 0.95),
             "mean_latency_ms": round(sum(latency) / len(latency), 2) if latency else None,
@@ -119,19 +124,40 @@ class OllamaClient:
             "ollama_request model=%s endpoint=%s prompt_bytes=%d timeout=%.1fs",
             self.model, f"{self.base_url}/api/chat", prompt_bytes, self.timeout_seconds,
         )
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.post(f"{self.base_url}/api/chat", json=payload)
-            response.raise_for_status()
-            data = response.json()
-        message = data.get("message", {})
-        raw = message.get("content", "")
-        parsed = json.loads(raw)
-        if not isinstance(parsed, dict):
-            raise ValueError("Ollama response must be a JSON object")
-        duration_ms = round((time.perf_counter() - started) * 1000, 2)
         self.call_count += 1
+        call_index = self.call_count
+        data: dict[str, Any] = {}
+        raw = ""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(f"{self.base_url}/api/chat", json=payload)
+                response.raise_for_status()
+                data = response.json()
+            message = data.get("message", {})
+            raw = message.get("content", "")
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                raise ValueError("Ollama response must be a JSON object")
+        except Exception as exc:
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            self.last_metrics = {
+                "call_index": call_index,
+                "model": self.model,
+                "endpoint": f"{self.base_url}/api/chat",
+                "prompt_bytes": prompt_bytes,
+                "response_bytes": len(raw.encode("utf-8")) if isinstance(raw, str) else 0,
+                "latency_ms": duration_ms,
+                "success": False,
+                "error": type(exc).__name__,
+                "keep_alive": self.keep_alive,
+            }
+            self.metrics_history.append(dict(self.last_metrics))
+            logger.warning("ollama_failed metrics=%s", self.last_metrics)
+            raise
+
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
         self.last_metrics = {
-            "call_index": self.call_count,
+            "call_index": call_index,
             "model": self.model,
             "endpoint": f"{self.base_url}/api/chat",
             "prompt_bytes": prompt_bytes,
@@ -141,6 +167,7 @@ class OllamaClient:
             "load_duration_ns": data.get("load_duration"),
             "prompt_eval_count": data.get("prompt_eval_count"),
             "eval_count": data.get("eval_count"),
+            "success": True,
             "keep_alive": self.keep_alive,
         }
         self.metrics_history.append(dict(self.last_metrics))
