@@ -190,7 +190,9 @@ class AgentRuntime:
         )
         foreground = self.perception.snapshot().get("foreground_window")
         window_count = 0
-        if foreground and foreground.get("title"):
+        if foreground and foreground.get("sensitive"):
+            self.references.clear()
+        if foreground and foreground.get("title") and not foreground.get("sensitive"):
             window_count = self.index.refresh("window", [{
                 "name": foreground["title"], "target": str(foreground["handle"]),
                 **foreground,
@@ -250,7 +252,8 @@ class AgentRuntime:
                     )
                 mention = match.group(1).strip(" .") if match else ""
             if not mention:
-                return args, "Which installed application should I open?"
+                prompt = "Which application should I check?" if action_name == "app.is_running" else "Which installed application should I open?"
+                return args, prompt
             args["application"] = mention
             if action_name == "app.launch":
                 entity = self.index.resolve(mention, "application")
