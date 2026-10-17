@@ -259,18 +259,17 @@ class AgentRuntime:
         snapshot = self.perception.snapshot()
         foreground = snapshot.get("foreground_window")
         if action_name in {"app.launch", "app.is_running"}:
-            mention = str(args.get("application") or "")
-            if not mention:
-                if action_name == "app.launch":
-                    match = re.search(
-                        r"\b(?:open|launch|start|fire up)\s+(.+?)(?:\s+please)?$", text, re.I,
-                    )
-                else:
-                    match = re.search(
-                        r"\b(?:is|check if|whether)\s+(.+?)\s+(?:is\s+)?(?:running|open|active)\b",
-                        text, re.I,
-                    )
-                mention = match.group(1).strip(" .") if match else ""
+            if action_name == "app.launch":
+                match = re.search(
+                    r"\b(?:open|launch|start|fire up)\s+(.+?)(?:\s+please)?$", text, re.I,
+                )
+            else:
+                match = re.search(
+                    r"\b(?:is|check if|whether)\s+(.+?)\s+(?:is\s+)?(?:running|open|active)\b",
+                    text, re.I,
+                )
+            # Prefer the entity named in the owner's utterance over any model-proposed slot.
+            mention = match.group(1).strip(" .") if match else str(args.get("application") or "").strip()
             if not mention:
                 prompt = "Which application should I check?" if action_name == "app.is_running" else "Which installed application should I open?"
                 return args, prompt
@@ -302,11 +301,11 @@ class AgentRuntime:
             else:
                 return args, "There is no grounded foreground window to control."
         elif action_name == "volume.set":
-            if "level" not in args:
-                match = re.search(r"\b(\d{1,3})\s*%?", text)
-                if not match:
-                    return args, "What volume level should I set, from 0 to 100?"
+            match = re.search(r"\b(\d{1,3})\s*%?", text)
+            if match:
                 args["level"] = float(match.group(1))
+            elif "level" not in args:
+                return args, "What volume level should I set, from 0 to 100?"
         elif action_name == "settings.open":
             setting = str(args.get("setting") or "").casefold()
             if not setting:
@@ -334,7 +333,9 @@ class AgentRuntime:
             for action in actions
         ]
 
-    async def preview(self, text: str) -> dict[str, Any]:
+    async def preview(
+        self, text: str, *, trusted_args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         self._register_approved_macros()
         self.refresh_entities(force=False)
         normalized = " ".join(text.casefold().split())
@@ -403,7 +404,8 @@ class AgentRuntime:
                         route.selected_action = action.name
                         route.confidence = confidence_hint
                         route.reason = "local_ollama_shortlist_arbitration"
-                        route.slots = dict(arbitration.get("args") or {})
+                        # Do not promote model-proposed argument values to grounded slots.
+                        route.slots = {}
                 except Exception as exc:
                     logger.info("Local arbitration unavailable: %s", exc)
 
@@ -422,7 +424,9 @@ class AgentRuntime:
             and alias["phrase"] in normalized
             for alias in self.store.aliases()
         ) or action.name.startswith("macro.")
-        args, clarification = self._fill_args(text=text, action_name=action.name, supplied=route.slots)
+        args, clarification = self._fill_args(
+            text=text, action_name=action.name, supplied=trusted_args,
+        )
         if clarification:
             route.status = "clarify"
         grounded = sum(1 for slot in action.required_slots if args.get(slot) not in (None, ""))
@@ -495,7 +499,7 @@ class AgentRuntime:
                 text, clauses, args or {}, execute=execute,
                 confirmed=confirmed, session_id=session_id,
             )
-        preview = await self.preview(text)
+        preview = await self.preview(text, trusted_args=args or {})
         if preview.get("status") != "selected":
             return preview
         macro_id = self._macro_id_for_action(str(preview.get("action") or ""))
@@ -504,9 +508,6 @@ class AgentRuntime:
                 macro_id, args or {}, execute=execute, confirmed=confirmed, session_id=session_id,
             )
         merged_args = dict(preview.get("args") or {})
-        user_args = {key: value for key, value in (args or {}).items()
-                     if key not in {"hwnd", "application_target", "window"}}
-        merged_args.update(user_args)
         action_name = preview["action"]
         merged_args, grounding_error = self._fill_args(action_name, text, merged_args)
         if grounding_error:
@@ -618,17 +619,25 @@ class AgentRuntime:
             return {"status": "clarify", "reason": "plan_clause_count_mismatch",
                     "clarification": "Please separate the requested steps more clearly."}
         for index, step in enumerate(plan.steps):
-            if step.args.get("hwnd") == "$previous.hwnd":
-                enriched, clarification = dict(step.args), None
-            else:
-                enriched, clarification = self._fill_args(step.tool, clauses[index], step.args)
+            action = self.registry.get(step.tool)
+            if action is None:
+                return {"status": "rejected", "reason": "unknown_tool", "tool": step.tool}
+            # Keep only explicit owner slots and validated step-to-step references.
+            owner_args = {
+                key: args[key] for key in action.required_slots if key in args
+            }
+            reference_args = {
+                key: value for key, value in step.args.items()
+                if isinstance(value, str) and value.startswith("$previous.")
+            }
+            trusted_step_args = {**owner_args, **reference_args}
+            enriched, clarification = self._fill_args(
+                step.tool, clauses[index], trusted_step_args,
+            )
             if clarification:
                 return {"status": "clarify", "clarification": clarification,
                         "plan": plan.model_dump(mode="json")}
             step.args = enriched
-            action = self.registry.get(step.tool)
-            if action is None:
-                return {"status": "rejected", "reason": "unknown_tool", "tool": step.tool}
             route = IntentRouter(self.registry, self.store).route(clauses[index])
             retrieved_names = {candidate.action.name for candidate in route.candidates[:5]}
             if (
