@@ -164,6 +164,7 @@ async def benchmark_runtime(
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "mode": "preview_only_no_actions_executed",
         "model": getattr(runtime.ollama, "model", "unknown"),
+        "planner_model": getattr(runtime.ollama, "planner_model", getattr(runtime.ollama, "model", "unknown")),
         "endpoint": getattr(runtime.ollama, "base_url", "unknown"),
         "summary": summarize_benchmark_rows(records),
         "by_split": {

@@ -81,8 +81,30 @@ class OllamaClient:
             index = max(0, math.ceil(quantile * len(values)) - 1)
             return round(values[index], 2)
 
+        model_calls: dict[str, list[dict[str, Any]]] = {}
+        for item in calls:
+            model_calls.setdefault(str(item.get("model") or "unknown"), []).append(item)
+
+        def model_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+            values = sorted(
+                float(item["latency_ms"]) for item in items
+                if item.get("latency_ms") is not None
+            )
+            return {
+                "calls": len(items),
+                "failed_calls": sum(not item.get("success", True) for item in items),
+                "latency_p50_ms": percentile(values, 0.50),
+                "latency_p95_ms": percentile(values, 0.95),
+                "prompt_tokens": sum(int(item.get("prompt_eval_count") or 0) for item in items),
+                "completion_tokens": sum(int(item.get("eval_count") or 0) for item in items),
+            }
+
         return {
             "total_calls": self.call_count,
+            "model_usage": {
+                model: model_summary(items)
+                for model, items in sorted(model_calls.items())
+            },
             "successful_calls": self.successful_call_count,
             "failed_calls": self.failed_call_count,
             "success_rate": (

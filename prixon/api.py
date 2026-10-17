@@ -648,6 +648,7 @@ def apply_confidence_calibration(payload: CalibrationApplyRequest) -> dict[str, 
 def model_metrics() -> dict[str, Any]:
     return {
         "configured_model": runtime.ollama.model,
+        "configured_planner_model": runtime.ollama.planner_model,
         "endpoint": runtime.ollama.base_url,
         "mode": "local_only",
         "last_call": runtime.ollama.last_metrics,

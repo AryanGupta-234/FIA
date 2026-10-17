@@ -66,7 +66,7 @@ The proposal fits non-negative logistic weights and per-risk cutoffs from owner 
 - Offline confidence-weight fitting.
 - Decision traces correlate confidence-signal records with final execution/verification outcomes, including blocked, preview-only, confirmation-required and compound-step outcomes.
 - Per-layer latency and LLM-call counts are captured by preview; the deferred target-machine benchmark reports p50/p95 per layer and end-to-end.
-- Prompt/response size, latency, load-duration, keep-alive, lifetime success/failure, malformed-JSON and JSON-validity metrics, plus rolling p50/p95 summaries.
+- Prompt/response size, latency, load-duration, keep-alive, lifetime success/failure, malformed-JSON and JSON-validity metrics, plus rolling aggregate and per-model p50/p95/token summaries.
 - Preview-only target-machine benchmark CLI for end-to-end latency, LLM-call share and token measurements.
 
 ## Multilingual and code-mixed evaluation
