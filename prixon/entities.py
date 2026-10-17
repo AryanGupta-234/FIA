@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -37,6 +39,31 @@ class EntityIndex:
             })
         return count
 
+    @staticmethod
+    def _alias_target_exists(target_type: str, target: str) -> bool:
+        if target_type in {"application", "file", "folder"}:
+            path = Path(target).expanduser()
+            try:
+                resolved = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                return False
+            home = Path.home().resolve()
+            if resolved != home and home not in resolved.parents:
+                return False
+            return resolved.is_file() if target_type in {"application", "file"} else resolved.is_dir()
+        if target_type == "window":
+            try:
+                handle = int(target)
+            except (TypeError, ValueError):
+                return False
+            if os.name != "nt":
+                return True
+            import ctypes
+            return bool(ctypes.windll.user32.IsWindow(handle))
+        if target_type == "setting":
+            return target.startswith("ms-settings:")
+        return bool(target)
+
     def resolve(
         self, mention: str, kind: str | None = None, threshold: float = 0.78,
         context_target: str | None = None,
@@ -48,7 +75,11 @@ class EntityIndex:
         alias = self.store.alias(query)
         if alias and (kind is None or alias["target_type"] == kind):
             alias_scope = alias.get("scope") or {}
-            if all((context or {}).get(key) == value for key, value in alias_scope.items()):
+            scope_matches = all(
+                (context or {}).get(key) == value for key, value in alias_scope.items()
+            )
+            target_exists = self._alias_target_exists(alias["target_type"], alias["target"])
+            if scope_matches and target_exists:
                 return {
                     "kind": alias["target_type"],
                     "name": mention,
@@ -56,6 +87,11 @@ class EntityIndex:
                     "score": alias["confidence"],
                     "matched_by": "owner_alias",
                 }
+            if not target_exists:
+                self.store.audit("stale_entity_alias", {
+                    "phrase": query, "target_type": alias["target_type"],
+                    "target": alias["target"],
+                })
         best: dict[str, Any] | None = None
         best_score = 0.0
         runner_up = 0.0
