@@ -15,4 +15,7 @@ class PrixonSettings(BaseSettings):
     agent_loop_poll_seconds: float = 2.0
     semantic_enabled: bool = False
     agent_autostart: bool = True
+    voice_kill_enabled: bool = False
+    voice_model_path: str = ""
+    voice_capture_seconds: float = 5.0
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_prefix="PRIXON_")
