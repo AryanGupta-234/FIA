@@ -333,3 +333,11 @@ def test_rules_handle_additional_lookalikes_and_phrasings():
     assert router.route("make this window full size").selected_action == "window.maximize"
     assert router.route("unminimize this window").selected_action == "window.restore"
     assert router.route("close the current app").selected_action == "window.close"
+
+
+def test_polite_prefixes_do_not_change_query_or_control_class():
+    router = IntentRouter()
+    assert router.route("please is notepad open").selected_action == "app.is_running"
+    assert router.route("please close the current app").selected_action == "window.close"
+    assert router.route("current audio level").selected_action == "system.audio"
+    assert router.route("please unminimize this window").selected_action == "window.restore"
