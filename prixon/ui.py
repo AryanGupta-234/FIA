@@ -81,7 +81,7 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
       <div class="panel" style="margin-bottom:16px"><div class="eyebrow">Interaction</div><h2 style="margin:5px 0 8px">Command Center</h2><div class="panel-sub">Every request passes through deterministic grounding, confidence gates and the registered action contract.</div><div style="margin-top:18px" class="command-box"><textarea id="commandInput2" placeholder="What should Prixon do?"></textarea><div class="command-actions"><span class="helper">Safe L1/L2 requests may run automatically. L4 requires confirmation.</span><button class="btn primary" id="sendBtn2">Run command ↗</button></div></div><div id="commandResult2" class="result"><strong id="resultTitle2"></strong><p id="resultBody2"></p><div id="confirmRow2" style="display:none;margin-top:11px"><button class="btn primary" id="confirmBtn2">Confirm and execute</button></div></div></div>
       <div class="panel"><div class="panel-head"><div><div class="panel-title">Registered Capabilities</div><div class="panel-sub">Actions currently exposed by the local registry.</div></div><span id="actionCount" class="badge">—</span></div><div id="actionList" class="list"></div></div>
     </section>
-    <section id="view-goals" class="view"><div class="panel"><div class="panel-head"><div><div class="panel-title">Goals & Signals</div><div class="panel-sub">Persistent user goals and suggestion-only proactive events.</div></div><button id="goalRefresh" class="btn subtle">Refresh</button></div><div id="goalList" class="list"><div class="empty">No goals available.</div></div></div></section>
+    <section id="view-goals" class="view"><div class="panel"><div class="panel-head"><div><div class="panel-title">Goals & Signals</div><div class="panel-sub">Persistent user goals and suggestion-only proactive events.</div></div><button id="goalRefresh" class="btn subtle">Refresh</button></div><div class="command-box" style="margin:12px 0 16px"><textarea id="goalInput" style="min-height:56px" placeholder="Describe an outcome to keep on Prixon's goal stack…"></textarea><div class="command-actions"><span class="helper">Prixon will prepare a typed plan; L4 steps still need confirmation.</span><button class="btn primary" id="createGoalBtn">Create goal</button></div></div><div id="goalResult" class="result"><strong id="goalResultTitle"></strong><p id="goalResultBody"></p></div><div id="goalList" class="list"><div class="empty">No goals available.</div></div></div></section>
     <section id="view-activity" class="view"><div class="panel"><div class="panel-head"><div><div class="panel-title">Recent Activity</div><div class="panel-sub">Local action and decision audit summaries.</div></div><button id="auditRefresh" class="btn subtle">Refresh</button></div><div id="auditList" class="activity"><div class="empty">No activity loaded.</div></div></div></section>
     <div class="footer-note">PRIXON · LOCAL-FIRST · WINDOWS AUTOMATION · RISK-GATED AUTONOMY</div>
   </main>
@@ -161,7 +161,7 @@ async function refreshSuggestions(){
 }
 async function refreshGoals(){
   const items=await request("/goals");
-  fillList("goalList",items,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.description||"Goal")+'</strong><small>Priority '+esc(item.priority)+' · '+esc(item.created_at||"")+'</small></div><span class="badge '+(item.status==="completed"?"good":"")+'">'+esc(item.status)+'</span></div>',"No stored goals.");
+  fillList("goalList",items,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.description||"Goal")+'</strong><small>Priority '+esc(item.priority)+' · '+esc(item.created_at||"")+'</small></div><div style="display:flex;gap:7px;align-items:center"><span class="badge '+(item.status==="completed"?"good":"")+'">'+esc(item.status)+'</span>'+(["pending","active"].includes(item.status)?'<button class="btn subtle" data-goal-cancel="'+esc(item.id)+'">Cancel</button>':"")+'</div></div>',"No stored goals.");
 }
 async function refreshAudit(){
   const items=await request("/audit?limit=30");
@@ -192,6 +192,36 @@ $("sendBtn2").addEventListener("click",()=>sendCommand($("commandInput2").value,
 $("confirmBtn").addEventListener("click",()=>pendingText&&sendCommand(pendingText,"1",true));
 $("confirmBtn2").addEventListener("click",()=>pendingText&&sendCommand(pendingText,"2",true));
 $("refreshBtn").addEventListener("click",()=>refreshAll());
+$("createGoalBtn").addEventListener("click",async()=>{
+  const description=$("goalInput").value.trim();
+  if(!description)return;
+  const button=$("createGoalBtn");button.disabled=true;button.textContent="Planning…";
+  try{
+    const result=await request("/goals",{method:"POST",body:JSON.stringify({
+      description,priority:2,plan:null,confirmed:false
+    })});
+    $("goalResult").classList.add("show");
+    $("goalResultTitle").textContent="Goal added";
+    $("goalResultBody").textContent=result.message||"Prixon has stored the goal and prepared its typed plan.";
+    $("goalInput").value="";
+    await refreshGoals();
+  }catch(error){
+    $("goalResult").classList.add("show");
+    $("goalResultTitle").textContent="Goal not created";
+    $("goalResultBody").textContent=error.message;
+  }finally{button.disabled=false;button.textContent="Create goal";}
+});
+$("goalList").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-goal-cancel]");
+  if(!button)return;
+  button.disabled=true;
+  try{
+    await request("/goals/"+encodeURIComponent(button.dataset.goalCancel)+"/status",{
+      method:"POST",body:JSON.stringify({status:"cancelled"})
+    });
+    await refreshGoals();
+  }catch(error){alert(error.message);button.disabled=false;}
+});
 $("goalRefresh").addEventListener("click",()=>refreshGoals());
 $("auditRefresh").addEventListener("click",()=>refreshAudit());
 $("killBtn").addEventListener("click",async()=>{try{await request("/kill",{method:"POST",body:"{}"});await refreshAll();}catch(e){alert(e.message);}});
