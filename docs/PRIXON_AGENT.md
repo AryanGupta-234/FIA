@@ -25,7 +25,8 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 ### Safe execution
 - Typed action contracts with slots, preconditions, postconditions, undo support, risk and automation tiers.
 - Plan validation at planner and executor boundaries.
-- Native Win32/Settings URI adapters plus a tier-2 Windows media-session adapter (play, pause, stop, next, previous, status); no song titles or artist metadata are read.
+- Native Win32/Settings URI adapters plus tier-2 Windows media-session and Office COM adapters; media reads playback state only, Office reads open/unsaved counts only.
+- Optional loopback Chromium DevTools diagnostics for browser product/version and target-type counts only; no URLs, titles, DOM, cookies or page data are read.
 - UI Automation summaries are bounded to actionable roles/names/automation IDs, cached per HWND, and invalidated on window lifecycle/focus events.
 - Step, wall-clock, model-token and action-rate budgets. Ollama generation tokens are charged against one per-request budget shared by arbitration, self-consistency, compound planning and failure reflection; partial compound recovery inherits the original wall-clock deadline.
 - Postcondition verification and deterministic prediction-error logging.
@@ -43,6 +44,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 
 ### Evaluation/performance
 - Frozen + growing JSONL intent benchmark, including wrong-selection rate separately from safe abstention.
+- Versioned 12,840-example global seed corpus generated from registered action examples, loaded through chunked BGE embeddings and cached in SQLite by model/corpus version.
 - Offline confidence-weight fitting.
 - Prompt/response size, latency, load-duration, keep-alive, lifetime success/failure, malformed-JSON and JSON-validity metrics, plus rolling p50/p95 summaries.
 - Preview-only target-machine benchmark CLI for end-to-end latency, LLM-call share and token measurements.
@@ -52,7 +54,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 Run from the repository root on the Windows device with Prixon configured and the local Ollama model already pulled:
 
 ~~~powershell
-py -3.11 -m pip install -e ".[dev,windows,media]"
+py -3.11 -m pip install -e ".[dev,windows,media,browser]"
 py -3.11 -m prixon.benchmark --split all --output artifacts/prixon-benchmark-latest.json
 ~~~
 
@@ -65,7 +67,7 @@ This benchmark calls the preview/decision path only; it does not execute Windows
 - Observed window/page/file text cannot teach aliases or elevate autonomy.
 - No browser credentials, cookies or password fields are collected.
 - Clipboard text is fetched only for a direct owner request after L4 confirmation; it is returned to the requester but never written to audit, episode or persistent goal records. Sensitive clipboard actions are blocked from background goals and macro promotion.
-- Vision/OCR and app-specific adapters remain future automation tiers.
+- Vision/OCR remains a future last-resort tier; Browser DevTools is metadata-only and never used to scrape or interpret page content.
 
 ## Windows media controls (tier 2)
 
@@ -78,6 +80,28 @@ py -3.11 -m pip install -e ".[windows,media]"
 ~~~
 
 Available actions include `media.status`, `media.play`, `media.pause`, `media.stop`, `media.skip_next` and `media.skip_previous`. A target app can be supplied when an active media session for that app exists; otherwise Prixon uses the Windows current media session.
+
+## Office session metadata (tier 2)
+
+The Office COM adapter reports whether Word, Excel and PowerPoint sessions are active, plus open-item and unsaved-item counts. It never reads document/workbook/presentation names, paths, text, cells, formulas, slide content or selection values. It uses the existing optional `.[windows]` dependencies.
+
+The action is `office.status`.
+
+## Chromium debugging metadata (tier 2)
+
+Browser diagnostics are disabled by default. To opt in, close the browser and start Brave, Chrome or Edge yourself with a loopback-only debugging port, for example:
+
+~~~powershell
+& "$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe" --remote-debugging-port=9222
+~~~
+
+Then set `PRIXON_BROWSER_DEBUG_ENABLED=true` in `.env`. Install the optional websocket dependency:
+
+~~~powershell
+py -3.11 -m pip install -e ".[windows,browser]"
+~~~
+
+The `browser.debug_status` action only calls Chromium's local browser/version and target-list diagnostics and returns the product/version plus counts by target type. It discards target URLs and titles and does not inspect page contents, cookies, storage, DOM, form values or browser history. The endpoint is required to be loopback and match the configured port; non-local websocket destinations are rejected. Disable the adapter with `PRIXON_BROWSER_DEBUG_ENABLED=false`.
 
 ## Optional local voice kill
 
