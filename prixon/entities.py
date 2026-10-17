@@ -98,9 +98,7 @@ class EntityIndex:
         alias = self.store.alias(query, context=context)
         if alias and (kind is None or alias["target_type"] == kind):
             alias_scope = alias.get("scope") or {}
-            scope_matches = all(
-                (context or {}).get(key) == value for key, value in alias_scope.items()
-            )
+            scope_matches = self.store.scope_matches(alias_scope, context)
             target_exists = (
                 any(
                     row["kind"] == alias["target_type"] and row["target"] == alias["target"]

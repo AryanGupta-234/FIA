@@ -165,8 +165,9 @@ class UndoRequest(BaseModel):
 
 
 class DeleteAliasRequest(BaseModel):
-    phrase: str = Field(min_length=2, max_length=100)
+    phrase: str = Field(min_length=2, max_length=180)
     target: str | None = Field(default=None, max_length=500)
+    scope: dict[str, Any] | None = None
 
 
 class ResetLearningRequest(BaseModel):

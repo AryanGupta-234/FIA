@@ -200,12 +200,17 @@ def record_owner_feedback(payload: AliasFeedbackRequest) -> dict[str, Any]:
 
 @router.delete("/learning/aliases")
 def delete_learning_alias(payload: DeleteAliasRequest) -> dict[str, Any]:
-    runtime.store.remove_alias(payload.phrase)
+    removed_aliases = runtime.store.remove_alias(payload.phrase, scope=payload.scope)
     removed_candidates = runtime.store.remove_alias_candidate(payload.phrase, payload.target)
     runtime.store.audit("owner_removed_learning_entry", {
         "phrase": payload.phrase, "target": payload.target,
+        "scope": payload.scope, "alias_rows_removed": removed_aliases,
     })
-    return {"status": "removed", "phrase": payload.phrase, "candidate_rows_removed": removed_candidates}
+    return {
+        "status": "removed", "phrase": payload.phrase,
+        "alias_rows_removed": removed_aliases,
+        "candidate_rows_removed": removed_candidates,
+    }
 
 
 @router.post("/learning/reset")
