@@ -589,7 +589,7 @@ class AgentRuntime:
         return {
             "status": (
                 recovery.get("status")
-                if recovery.get("performed") and recovery.get("status") == "completed"
+                if recovery.get("status") in {"completed", "confirmation_required", "clarify"}
                 else "completed" if result.success else "failed"
             ),
             "action": recovery.get("action", action_name),
@@ -779,6 +779,8 @@ class AgentRuntime:
         if not reflection.get("replan") or not reflection.get("alternative_action"):
             return {"performed": False, "reflection": reflection}
         alternative = self.registry.get(str(reflection["alternative_action"]))
+        if self.executor.budget.max_replans < 1:
+            return {"performed": False, "reason": "replan_budget_exhausted", "reflection": reflection}
         if (
             alternative is None
             or alternative.name not in {item["name"] for item in candidates}
@@ -806,11 +808,13 @@ class AgentRuntime:
                 "performed": False, "reason": "alternative_plan_invalid",
                 "errors": validation.errors, "reflection": reflection,
             }
-        if alternative.risk == RiskTier.ALWAYS_CONFIRM and not confirmed:
+        # A confirmation for the failed action does not authorize a different L4 action.
+        if alternative.risk == RiskTier.ALWAYS_CONFIRM:
             return {
                 "performed": False, "status": "confirmation_required",
                 "alternative_action": alternative.name, "args": args,
                 "reflection": reflection,
+                "message": "The alternative is a separate L4 action and requires its own explicit confirmation.",
             }
         # Reflection cannot grant confidence: use only deterministic retrieval and slot evidence.
         selected_score = next(
