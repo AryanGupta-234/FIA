@@ -476,3 +476,7 @@
 {"text":"make this window full size","expected_action":"window.maximize","split":"growing","case_type":"lookalike"}
 {"text":"unminimize this window","expected_action":"window.restore","split":"growing","case_type":"lookalike"}
 {"text":"close the current app","expected_action":"window.close","split":"growing","case_type":"lookalike"}
+{"text":"please is notepad open","expected_action":"app.is_running","split":"growing","case_type":"polite_prefix"}
+{"text":"please close the current app","expected_action":"window.close","split":"growing","case_type":"polite_prefix"}
+{"text":"current audio level","expected_action":"system.audio","split":"growing","case_type":"polite_prefix"}
+{"text":"please unminimize this window","expected_action":"window.restore","split":"growing","case_type":"polite_prefix"}
