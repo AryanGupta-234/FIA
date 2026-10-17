@@ -15,7 +15,7 @@ import psutil
 from prixon.governance import decide
 from prixon.perception import WindowsPerception
 from prixon.registry import ActionRegistry
-from prixon.schemas import AgentPlan, PlanStep, RiskTier
+from prixon.schemas import AgentPlan, RiskTier
 from prixon.store import AgentStore
 
 
