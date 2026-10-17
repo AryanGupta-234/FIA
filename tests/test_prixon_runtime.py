@@ -341,3 +341,37 @@ def test_polite_prefixes_do_not_change_query_or_control_class():
     assert router.route("please close the current app").selected_action == "window.close"
     assert router.route("current audio level").selected_action == "system.audio"
     assert router.route("please unminimize this window").selected_action == "window.restore"
+
+
+def test_persisted_events_can_be_replayed_without_creating_duplicate_rows(store):
+    from prixon.events import EventBus
+
+    event_id = store.enqueue_event("download_finished", {"name": "sample.zip"})
+    persisted = store.pending_events()
+    bus = EventBus()
+    bus.publish(
+        persisted[0]["event_type"], persisted[0]["payload"],
+        persisted_id=persisted[0]["id"],
+    )
+    event = bus.drain()[0]
+    assert event.persisted_id == event_id
+    assert event.event_type == "download_finished"
+    assert store.pending_events()[0]["id"] == event_id
+
+
+def test_active_goals_are_marked_interrupted_not_replayed(store):
+    from prixon.agent_loop import AgentLoop
+    from prixon.runtime import AgentRuntime
+
+    runtime = AgentRuntime(store=store)
+    goal_id = store.add_goal("interrupted test goal")
+    store.set_goal_status(goal_id, "active")
+    loop = AgentLoop(runtime)
+    try:
+        import asyncio
+        asyncio.run(loop.start())
+        assert store.goals(("blocked",))[0]["id"] == goal_id
+    finally:
+        import asyncio
+        asyncio.run(loop.stop("test_cleanup"))
+        runtime.executor.shutdown()
