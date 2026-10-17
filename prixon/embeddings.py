@@ -46,9 +46,10 @@ class RetrievedAction:
 
 
 class SemanticRetriever:
-    def __init__(self, registry: ActionRegistry, embedder: Embedder) -> None:
+    def __init__(self, registry: ActionRegistry, embedder: Embedder, store=None) -> None:
         self.registry = registry
         self.embedder = embedder
+        self.store = store
         examples = [
             (action.name, phrase)
             for action in registry.all()
@@ -59,6 +60,12 @@ class SemanticRetriever:
             (name, phrase, vector)
             for (name, phrase), vector in zip(examples, vectors, strict=True)
         ]
+        if self.store is not None:
+            for row in self.store.semantic_examples():
+                if self.registry.get(row["action_name"]) is not None:
+                    self._examples.append((
+                        row["action_name"], row["phrase"], row["vector"],
+                    ))
 
     def retrieve(self, utterance: str, limit: int = 8) -> list[RetrievedAction]:
         vector = self.embedder.embed([utterance])[0]
@@ -79,5 +86,9 @@ class SemanticRetriever:
         if len(existing) >= max_examples_per_action:
             weakest = min(existing, key=lambda row: len(row[1]))
             self._examples.remove(weakest)
+            if self.store is not None:
+                self.store.remove_semantic_example(action_name, weakest[1])
         self._examples.append((action_name, phrase, vector))
+        if self.store is not None:
+            self.store.add_semantic_example(action_name, phrase, vector)
         return True
