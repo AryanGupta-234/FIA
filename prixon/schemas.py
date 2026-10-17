@@ -92,7 +92,8 @@ class DecisionRequest(BaseModel):
 class RunRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     args: dict[str, Any] = Field(default_factory=dict)
-    execute: bool = False
+    # None means safe automatic mode: read-only reflex actions may run; mutations preview.
+    execute: bool | None = None
     confirmed: bool = False
     session_id: str = "local-session"
 

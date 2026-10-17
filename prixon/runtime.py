@@ -546,18 +546,19 @@ class AgentRuntime:
 
     async def run_request(
         self, text: str, args: dict[str, Any] | None = None, *,
-        execute: bool = False, confirmed: bool = False, session_id: str = "local-session",
+        execute: bool | None = None, confirmed: bool = False, session_id: str = "local-session",
     ) -> dict[str, Any]:
         self._discard_rephrased_pending_learning(text, session_id)
         matching_macro = self.matching_approved_macro(text)
         if matching_macro is not None:
+            macro_execute = bool(execute)
             macro_preview = await self.preview(text)
             macro_action = self.registry.get(str(macro_preview.get("action") or ""))
             if (
                 macro_preview.get("status") != "selected"
                 or self._macro_id_for_action(str(macro_preview.get("action") or "")) != matching_macro
                 or macro_action is None
-                or (execute and not meets_risk_threshold(
+                or (macro_execute and not meets_risk_threshold(
                     float(macro_preview.get("confidence", 0.0)), RiskTier.ROUTINE.value,
                 ))
             ):
@@ -567,13 +568,13 @@ class AgentRuntime:
                     "confidence": macro_preview.get("confidence", 0.0),
                 }
             return await self.run_macro(
-                matching_macro, args or {}, execute=execute,
+                matching_macro, args or {}, execute=macro_execute,
                 confirmed=confirmed, session_id=session_id,
             )
         clauses = self.split_compound(text)
         if len(clauses) > 1:
             return await self._run_compound(
-                text, clauses, args or {}, execute=execute,
+                text, clauses, args or {}, execute=bool(execute),
                 confirmed=confirmed, session_id=session_id,
             )
         preview = await self.preview(text, trusted_args=args or {})
@@ -592,6 +593,8 @@ class AgentRuntime:
         action = self.registry.get(action_name)
         if action is None:
             return {"status": "rejected", "reason": "unknown_action"}
+        if execute is None:
+            execute = action.risk == RiskTier.READ_ONLY
         for slot in action.required_slots:
             if merged_args.get(slot) in (None, ""):
                 return {"status": "clarify", "clarification": f"What {slot} should I use?"}

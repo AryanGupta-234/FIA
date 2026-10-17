@@ -129,7 +129,7 @@ def default_actions() -> list[ActionSpec]:
         ),
         ActionSpec(
             name="app.launch", description="Launch a grounded installed application by its registered identity.",
-            examples=("open notepad", "launch calculator", "fire up paint", "start calculator",
+            examples=("open notepad", "open calculator", "launch calculator", "fire up paint", "start calculator",
                       "open visual studio code", "launch spotify", "start brave browser",
                       "open the installed chrome app", "bring up notepad",
                       "run calculator", "start microsoft edge", "open discord"),
