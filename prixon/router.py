@@ -22,7 +22,10 @@ def classify(text: str) -> IntentClass:
         "open wifi settings", "open wi-fi settings", "open battery settings",
         "open bluetooth settings", "open sound settings", "open display settings",
         "open night light settings", "open focus assist settings",
-    )) or re.search(r"\\b(set|change|adjust)\\s+(?:the\\s+)?(?:volume|brightness|wifi|wi-fi)\\b", value):
+    )) or re.search(r"\b(?:set|change|adjust)\s+(?:the\s+)?(?:volume|brightness|wifi|wi-fi)\b", value) or re.search(
+        r"\b(?:turn|lower|raise|increase|decrease|mute|unmute)\b.*\bvolume\b|\bvolume\s+at\s+\d{1,3}\b",
+        value,
+    ):
         return IntentClass.SYSTEM_SETTING
     if any(term in value for term in (
         "wifi", "wi-fi", "wireless", "battery", "volume", "master audio",
