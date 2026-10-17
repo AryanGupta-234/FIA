@@ -316,12 +316,6 @@ class AgentRuntime:
         self.refresh_entities(force=False)
         normalized = " ".join(text.casefold().split())
         alias_used = False
-        # Only user-taught aliases are eligible for direct substitution.
-        for alias in self.store.aliases():
-            if alias["target_type"] == "action" and alias["phrase"] in normalized:
-                normalized = normalized.replace(alias["phrase"], alias["target"].replace(".", " "))
-                alias_used = True
-
         route = IntentRouter(self.registry, self.store).route(normalized)
         arbitration: dict[str, Any] | None = None
         if route.status != "selected" and self.semantic is not None:
@@ -399,6 +393,12 @@ class AgentRuntime:
                 "candidates": [candidate.model_dump(mode="json") for candidate in route.candidates],
             }
 
+        alias_used = any(
+            alias["target_type"] == "action"
+            and alias["target"] == action.name
+            and alias["phrase"] in normalized
+            for alias in self.store.aliases()
+        )
         args, clarification = self._fill_args(text=text, action_name=action.name, supplied=route.slots)
         if clarification:
             route.status = "clarify"
