@@ -26,7 +26,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - Typed action contracts with slots, preconditions, postconditions, undo support, risk and automation tiers.
 - Plan validation at planner and executor boundaries.
 - Native Windows adapters without model-generated shell/script/PowerShell.
-- Step, wall-clock, model-token and action-rate budgets, with the same wall-clock deadline across partial recovery.
+- Step, wall-clock, model-token and action-rate budgets. Ollama generation tokens are charged against one per-request budget shared by arbitration, self-consistency, compound planning and failure reflection; partial compound recovery inherits the original wall-clock deadline.
 - Postcondition verification and deterministic prediction-error logging.
 - Retry once, then constrained failure reflection/replan, then escalation.
 - Compound failure recovery resumes only independent unattempted steps; completed actions are never replayed and dependent steps are surfaced as blocked.
