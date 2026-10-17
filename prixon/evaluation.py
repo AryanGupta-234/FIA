@@ -20,8 +20,10 @@ def load_dataset(path: str | Path) -> list[dict[str, Any]]:
                 row = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSONL at line {line_number}") from exc
-            if not isinstance(row.get("text"), str) or not isinstance(row.get("expected_action"), str):
-                raise ValueError(f"Missing text/expected_action at line {line_number}")
+            if not isinstance(row.get("text"), str):
+                raise ValueError(f"Missing text at line {line_number}")
+            if not isinstance(row.get("expected_action"), str) and not isinstance(row.get("expected_status"), str):
+                raise ValueError(f"Missing expected_action/expected_status at line {line_number}")
             rows.append(row)
     return rows
 
@@ -30,56 +32,77 @@ def evaluate_rows(
     rows: list[dict[str, Any]], router: IntentRouter | None = None,
 ) -> dict[str, Any]:
     router = router or IntentRouter(ActionRegistry())
-    total, correct = 0, 0
-    unresolved, clarified = 0, 0
+    total = correct = unresolved = clarified = frozen_total = frozen_correct = 0
+    rule_selected = 0
     per_action: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
+    per_case: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
+    per_class: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
     confusions: dict[str, int] = defaultdict(int)
-    frozen_total, frozen_correct = 0, 0
+
     for row in rows:
-        expected = row["expected_action"]
-        result = router.route(row["text"])
-        predicted = result.selected_action
+        route_text = row.get("route_text", row["text"])
+        result = router.route(route_text)
+        expected_action = row.get("expected_action")
+        expected_status = row.get("expected_status")
+        if expected_status:
+            outcome_correct = result.status == expected_status
+            label = f"status:{expected_status}"
+        else:
+            outcome_correct = result.selected_action == expected_action
+            label = str(expected_action)
         total += 1
-        per_action[expected]["total"] += 1
+        per_case[row.get("case_type", "unspecified")]["total"] += 1
+        per_case[row.get("case_type", "unspecified")]["correct"] += int(outcome_correct)
+        per_class[(result.intent_class.value if result.intent_class else "none")]["total"] += 1
+        per_class[(result.intent_class.value if result.intent_class else "none")]["correct"] += int(outcome_correct)
+        if expected_action:
+            per_action[expected_action]["total"] += 1
+            per_action[expected_action]["correct"] += int(outcome_correct)
         if result.status == "unresolved":
             unresolved += 1
         elif result.status == "clarify":
             clarified += 1
-        if predicted == expected:
+        if result.reason == "rules_first_registry_match":
+            rule_selected += 1
+        if outcome_correct:
             correct += 1
-            per_action[expected]["correct"] += 1
         else:
-            confusions[f"{expected} -> {predicted or result.status}"] += 1
+            confusions[f"{label} -> {result.selected_action or result.status}"] += 1
         if row.get("split") == "frozen":
             frozen_total += 1
-            frozen_correct += int(predicted == expected)
+            frozen_correct += int(outcome_correct)
+
+    def rates(rows_by_key: dict[str, dict[str, int]]) -> dict[str, dict[str, int | float]]:
+        return {
+            key: {
+                **counts,
+                "accuracy": round(counts["correct"] / counts["total"], 4) if counts["total"] else 0.0,
+            }
+            for key, counts in rows_by_key.items()
+        }
+
     return {
         "total": total,
         "correct": correct,
-        "action_accuracy": round(correct / total, 4) if total else 0.0,
-        "unresolved": unresolved,
-        "clarified": clarified,
+        "action_and_status_accuracy": round(correct / total, 4) if total else 0.0,
+        "clarification_rate": round(clarified / total, 4) if total else 0.0,
+        "unresolved_rate": round(unresolved / total, 4) if total else 0.0,
+        "l1_rules_selected_share": round(rule_selected / total, 4) if total else 0.0,
         "frozen_total": frozen_total,
         "frozen_accuracy": round(frozen_correct / frozen_total, 4) if frozen_total else None,
-        "per_action": {
-            action: {
-                **counts,
-                "accuracy": round(counts["correct"] / counts["total"], 4) if counts["total"] else 0,
-            }
-            for action, counts in per_action.items()
-        },
-        "top_confusions": sorted(confusions.items(), key=lambda item: item[1], reverse=True)[:20],
+        "per_action": rates(per_action),
+        "per_case_type": rates(per_case),
+        "per_intent_class": rates(per_class),
+        "top_confusions": sorted(confusions.items(), key=lambda item: item[1], reverse=True)[:25],
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate Prixon intent routing on the frozen JSONL dataset.")
-    parser.add_argument(
-        "--dataset", default="tests/data/prixon_eval.jsonl",
-        help="Path to the frozen JSONL evaluation set.",
-    )
+    parser = argparse.ArgumentParser(description="Evaluate Prixon intent routing on the frozen/growing JSONL set.")
+    parser.add_argument("--dataset", default="tests/data/prixon_eval.jsonl")
     args = parser.parse_args()
-    print(json.dumps(evaluate_rows(load_dataset(args.dataset)), indent=2))
+    report = evaluate_rows(load_dataset(args.dataset))
+    print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":
