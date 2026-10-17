@@ -65,3 +65,16 @@ npm run build
 FIA cannot crawl the entire internet exhaustively. Coverage depends on the configured search provider, the results it returns, retailer permissions and robots policy. Images from image search are a fallback and may not represent the exact SKU. A visible discount is shown only when source data provides the relevant price evidence. Always verify the live retailer listing before purchase.
 
 See docs/ARCHITECTURE.md, docs/SECURITY.md and docs/ROADMAP.md.
+
+
+## Prixon autonomous Windows agent (parallel subsystem)
+
+This repository also contains the **Prixon** local-first Windows agent foundation. It is developed and tested separately from FIA's fashion research workflow.
+
+- Agent API: `/api/v1/agent/health`, `/actions`, `/decide`, `/aliases`, `/governance/check`.
+- Deterministic rules-first intent routing and allowlisted action contracts.
+- Local-only Ollama adapter (no hosted model fallback).
+- Validated plans and L0-L4 autonomy/risk gate.
+- **Execution is disabled in this foundation slice.** No model-generated shell command can execute.
+
+See [Prixon implementation notes](docs/PRIXON_AGENT.md).
