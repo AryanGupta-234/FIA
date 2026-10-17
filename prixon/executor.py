@@ -134,7 +134,19 @@ class WindowsActionAdapters:
                         break
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
-            return {"launched": target, "application": args.get("application"), "pid": selected_pid}
+            foreground = None
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                foreground = self.perception._foreground_window()
+                if foreground and selected_pid and foreground.get("pid") == selected_pid:
+                    break
+                time.sleep(0.2)
+            return {
+                "launched": target, "application": args.get("application"),
+                "pid": selected_pid,
+                "hwnd": foreground.get("handle") if foreground and selected_pid and foreground.get("pid") == selected_pid else None,
+                "window": foreground.get("title") if foreground and selected_pid and foreground.get("pid") == selected_pid else None,
+            }
         if action in {"window.minimize", "window.maximize", "window.restore"}:
             self._require_windows()
             hwnd = self._window_handle(args)
@@ -401,18 +413,21 @@ class ActionExecutor:
             self._seen_steps[signature] = self._seen_steps.get(signature, 0) + 1
             if self._seen_steps[signature] > 2:
                 return {"status": "aborted", "reason": "loop_detected", "steps": results}
-            action_result = self.execute_action(step.tool, step.args, confirmed=confirmed)
+            resolved_args = self._resolve_previous_references(step.args, results)
+            action_result = self.execute_action(step.tool, resolved_args, confirmed=confirmed)
             if not action_result.success:
                 action = self.registry.get(step.tool)
                 retryable = action is not None and (
-                    action.risk == RiskTier.READ_ONLY or step.tool in {"volume.set", "window.minimize", "window.restore"}
+                    action.risk == RiskTier.READ_ONLY
+                    or step.tool in {"volume.set", "window.minimize", "window.maximize", "window.restore"}
                 )
                 if retryable:
                     time.sleep(0.25)
-                    action_result = self.execute_action(step.tool, step.args, confirmed=confirmed)
+                    action_result = self.execute_action(step.tool, resolved_args, confirmed=confirmed)
             item = {
                 "index": index, "action": action_result.action,
                 "success": action_result.success, "verified": action_result.verified,
+                "args": resolved_args,
                 "output": action_result.output, "error": action_result.error,
                 "undo_id": action_result.undo_id,
                 "expected_outcome": step.expected_outcome,
@@ -421,6 +436,22 @@ class ActionExecutor:
             if not action_result.success:
                 return {"status": "failed", "reason": action_result.error, "steps": results}
         return {"status": "completed", "steps": results}
+
+    @staticmethod
+    def _resolve_previous_references(
+        args: dict[str, Any], results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        resolved = dict(args)
+        if not results:
+            return resolved
+        previous = results[-1].get("output", {})
+        for key, value in list(resolved.items()):
+            if isinstance(value, str) and value.startswith("$previous."):
+                field = value.removeprefix("$previous.")
+                if field not in previous or previous[field] is None:
+                    raise ValueError(f"Previous step did not produce required reference: {field}")
+                resolved[key] = previous[field]
+        return resolved
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)
