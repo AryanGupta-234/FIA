@@ -44,7 +44,8 @@ def classify(text: str) -> IntentClass:
     if re.search(r"\b(open|launch|start|fire up)\b", value):
         return IntentClass.LAUNCH
     if any(term in value for term in (
-        "minimize", "maximize", "restore", "unminimize", "close window", "close it",
+        "minimize", "maximize", "restore", "unminimize", "close window", "close this window",
+        "close current window", "close current app", "close it",
     )) or re.match(r"^close\s+", value):
         return IntentClass.CONTROL
     if any(term in value for term in (
