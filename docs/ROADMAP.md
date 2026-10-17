@@ -47,25 +47,25 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Initial regression tests
 
 ### P1 — Perception and grounding
-- [ ] Windows process/window perception adapter
-- [ ] Installed application entity catalogue
-- [ ] Foreground-window context and short-lived reference resolver
-- [ ] Normalized status queries that bypass the LLM
+- [x] Windows process/window perception adapter
+- [x] Installed application entity catalogue
+- [x] Foreground-window context and short-lived reference resolver
+- [x] Normalized status queries that bypass the LLM
 
 ### P2 — Semantic understanding
-- [ ] Embedding index, retrieval margin and hard negatives
-- [ ] Frozen evaluation dataset and calibrated confidence fusion
-- [ ] Constrained Ollama arbitration on grounded shortlist
+- [x] Embedding index, retrieval margin and hard negatives
+- [x] Frozen evaluation dataset and calibrated confidence fusion
+- [x] Constrained Ollama arbitration on grounded shortlist
 
 ### P3 — Safe execution
-- [ ] Plan preconditions and execution budgets
-- [ ] Windows allowlisted adapters, observable verification and retries
-- [ ] Undo journal, append-only audit and kill switch
+- [x] Plan preconditions and execution budgets
+- [x] Windows allowlisted adapters, observable verification and retries
+- [x] Undo journal, append-only audit and kill switch
 
 ### P4 — Learning and autonomy
-- [ ] Owner-only synonym/alias learning with Beta confidence and decay
-- [ ] Goal stack, event bus and bounded proactive suggestions
-- [ ] Macro promotion and offline threshold tuning
+- [x] Owner-only synonym/alias learning with Beta confidence and decay
+- [x] Goal stack, event bus and bounded proactive suggestions
+- [x] Macro promotion and offline threshold tuning
 
 
 ### Prixon — DOCX implementation roadmap
@@ -73,7 +73,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 #### Phase 0 — Local model and inference instrumentation
 - [x] Loopback-only Ollama endpoint; no cloud fallback
 - [x] Request/response size, model, endpoint, keep-alive and latency metrics
-- [ ] Validate decision-call p50/p95 on the target Windows laptop and tune for a few-second response
+- [ ] Run the preview-only benchmark on the target Windows laptop, archive p50/p95 and tune for a few-second response
 
 #### Phase 1 — Registry and hard-negative retrieval
 - [x] Typed contracts with verb, target, parameters, pre/postconditions, risk and automation tiers
@@ -94,14 +94,14 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Entity embedding/fuzzy grounding and owner example persistence
 - [x] Confidence fusion and risk-tier thresholds; weak LLM-confidence weight
 - [x] 315-case frozen/growing labelled JSONL corpus with per-action, per-class and per-category reports
-- [ ] Run and archive the target-machine benchmark; wrong-execution target must be agreed before deployment
+- [x] Add preview-only target-machine benchmark tooling; [ ] run and archive it on the target laptop and agree a wrong-execution target before deployment
 
 #### Phase 4 — Constrained local arbitration
 - [x] JSON-schema Ollama arbitration over grounded candidates only
 - [x] Two-sample low-confidence disagreement clarification
 - [x] Recent successful episodes supplied as short few-shot context
 - [x] Structured failure reflection and a bounded single-step same-or-lower-risk replan
-- [ ] Measure JSON validity and LLM-call share on real owner traffic
+- [x] Add request/token/failure/latency telemetry and LLM-call share reporting; [ ] measure JSON validity and LLM-call share on real owner traffic
 
 #### Phase 5 — Planning, execution and verification
 - [x] Compound clause retrieval, typed plan schema, dependency validation and bounded steps
@@ -109,7 +109,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] UI Automation and keyboard fallbacks for registered window actions
 - [x] Pre-action capture, timeouts, rate limits, postconditions, retry-once and undo journal
 - [x] Quarantine instead of permanent deletion; L4 confirmation
-- [ ] Compound-plan recovery/replanning after a partial execution; current behavior safely surfaces the partial result
+- [x] Bounded compound partial recovery resumes only independent unattempted steps under the original deadline; completed and failed steps are never replayed, and dependent steps are surfaced as blocked
 
 #### Phase 6 — Persistent autonomy loop and governance
 - [x] Persistent goal stack, event bus, WinEvent hooks, process/file/battery observers and audit records
