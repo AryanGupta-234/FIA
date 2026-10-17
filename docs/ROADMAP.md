@@ -77,49 +77,54 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 
 #### Phase 1 — Registry and hard-negative retrieval
 - [x] Typed contracts with verb, target, parameters, pre/postconditions, risk and automation tiers
-- [x] Intent-class filtering, contrastive examples and owner correction penalties
+- [x] Intent-class filtering, contrastive examples, hard negatives and owner correction penalties
 - [x] No TF-IDF path
+- [x] Expand examples for status/settings/window/app-running look-alikes
 
 #### Phase 2 — Perception and grounding
 - [x] Process/window observation, Start Menu application catalogue, foreground context and short-lived references
 - [x] Deterministic CPU, RAM, battery, Wi-Fi, audio, network and process queries
-- [x] Fuzzy and contextual entity index; stale entity aliases are rejected
-- [ ] Extend catalogue coverage to recent files/folders and broader file-system change events
+- [x] Fuzzy and contextual entity index; recent-file metadata from bounded known folders
+- [x] File change observation in Downloads, Documents and Desktop
+- [x] Optional WMI non-zero process-exit/crash classification
 - [ ] Add clipboard perception only behind explicit, privacy-reviewed actions
 
 #### Phase 3 — Retrieval and decision gate
 - [x] Optional BGE/FastEmbed action retrieval with top-8 shortlist and rank margin
 - [x] Entity embedding/fuzzy grounding and owner example persistence
 - [x] Confidence fusion and risk-tier thresholds; weak LLM-confidence weight
-- [x] Frozen/growing labelled JSONL corpus and per-action confusion report
+- [x] 315-case frozen/growing labelled JSONL corpus with per-action, per-class and per-category reports
 - [ ] Run and archive the target-machine benchmark; wrong-execution target must be agreed before deployment
 
 #### Phase 4 — Constrained local arbitration
 - [x] JSON-schema Ollama arbitration over grounded candidates only
 - [x] Two-sample low-confidence disagreement clarification
 - [x] Recent successful episodes supplied as short few-shot context
+- [x] Structured failure reflection and a bounded single-step same-or-lower-risk replan
 - [ ] Measure JSON validity and LLM-call share on real owner traffic
 
 #### Phase 5 — Planning, execution and verification
 - [x] Compound clause retrieval, typed plan schema, dependency validation and bounded steps
 - [x] Allowlisted Win32, process, audio and Settings URI adapters
+- [x] UI Automation and keyboard fallbacks for registered window actions
 - [x] Pre-action capture, timeouts, rate limits, postconditions, retry-once and undo journal
 - [x] Quarantine instead of permanent deletion; L4 confirmation
-- [ ] Alternative automation-tier fallback and bounded replan-on-failure
+- [ ] Compound-plan recovery/replanning after a partial execution; current behavior safely surfaces the partial result
 
 #### Phase 6 — Persistent autonomy loop and governance
 - [x] Persistent goal stack, event bus, WinEvent hooks, process/file/battery observers and audit records
+- [x] Local-time weekday routine schedules; schedule triggers remain suggestion-only
 - [x] Priority ordering, wall-clock/step/action budgets and loop abort
 - [x] Global Ctrl+Alt+Pause kill switch
 - [x] Proactive suggestions are suppressed in focus/fullscreen and are suggestion-only
-- [ ] Add voice kill command and Windows-native crash/ETW classification
+- [ ] Add voice kill command
 
 #### Phase 7 — Evolving language and owner learning
 - [x] Explicit alias teaching, corrections, negative memory and contextual entity aliases
-- [x] Beta-prior confidence, multi-session promotion, demotion and 60-day half-life
+- [x] Beta-prior confidence, multi-session promotion candidates, demotion and 60-day half-life
 - [x] Delayed weak success signal; correction/undo window; owner inspect/delete/reset controls
+- [x] Nightly learning digest with confirmation-gated approve/reject API
 - [x] Incremental, persistent embedding example growth with cosine deduplication/cap
-- [ ] Add owner-facing daily digest/approve/undo UI for proposed lexicon changes
 
 #### Phase 8 — Proactivity, macros and calibration
 - [x] Trigger cooldowns, annoyance score, accepted/dismissed feedback and interruption cap
