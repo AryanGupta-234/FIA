@@ -163,9 +163,19 @@ class AgentStore:
                     time_local TEXT NOT NULL,
                     weekdays_json TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
                     enabled INTEGER NOT NULL DEFAULT 1,
+                    auto_execute INTEGER NOT NULL DEFAULT 0,
                     last_fired_date TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS routine_executions (
+                    routine_id INTEGER NOT NULL,
+                    due_date TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    started_at REAL NOT NULL,
+                    finished_at REAL,
+                    PRIMARY KEY(routine_id,due_date)
                 );
                 CREATE TABLE IF NOT EXISTS agent_settings (
                     key TEXT PRIMARY KEY,
@@ -180,6 +190,12 @@ class AgentStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_world_state_captured ON world_state(captured_at DESC);
             """)
+            routine_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(routines)").fetchall()
+            }
+            if "auto_execute" not in routine_columns:
+                db.execute("ALTER TABLE routines ADD COLUMN auto_execute INTEGER NOT NULL DEFAULT 0")
+
             alias_columns = {
                 row["name"] for row in db.execute("PRAGMA table_info(aliases)").fetchall()
             }
@@ -315,7 +331,7 @@ class AgentStore:
 
     def create_routine(
         self, name: str, macro_id: int, time_local: str,
-        weekdays: list[int] | None = None,
+        weekdays: list[int] | None = None, *, auto_execute: bool = False,
     ) -> int:
         selected_days = sorted(set(weekdays if weekdays is not None else range(7)))
         if not selected_days or any(day not in range(7) for day in selected_days):
@@ -332,9 +348,12 @@ class AgentStore:
         with self.connect() as db:
             cursor = db.execute(
                 """INSERT INTO routines(
-                       name,macro_id,time_local,weekdays_json,enabled,created_at,updated_at
-                   ) VALUES(?,?,?,?,1,?,?)""",
-                (name, macro_id, time_local, json.dumps(selected_days), now, now),
+                       name,macro_id,time_local,weekdays_json,enabled,auto_execute,created_at,updated_at
+                   ) VALUES(?,?,?,?,1,?,?,?)""",
+                (
+                    name, macro_id, time_local, json.dumps(selected_days),
+                    int(auto_execute), now, now,
+                ),
             )
             return int(cursor.lastrowid)
 
@@ -351,7 +370,9 @@ class AgentStore:
                 {"id": row["id"], "name": row["name"], "macro_id": row["macro_id"],
                  "time_local": row["time_local"],
                  "weekdays": json.loads(row["weekdays_json"]),
-                 "enabled": bool(row["enabled"]), "last_fired_date": row["last_fired_date"]}
+                 "enabled": bool(row["enabled"]),
+                 "auto_execute": bool(row["auto_execute"]) if "auto_execute" in row.keys() else False,
+                 "last_fired_date": row["last_fired_date"]}
                 for row in rows
             ]
 
@@ -382,8 +403,14 @@ class AgentStore:
                         "title": row["name"],
                         "message": (
                             f"Your approved routine is scheduled for {row['time_local']}. "
-                            "Review it before running."
+                            + (
+                                "It will run using its owner-approved L3 policy."
+                                if bool(row["auto_execute"])
+                                else "Review it before running."
+                            )
                         ),
+                        "auto_execute": bool(row["auto_execute"]),
+                        "run_date": date_key,
                     }
                     event_cursor = db.execute(
                         "INSERT INTO event_queue(event_type,payload_json,created_at) VALUES(?,?,?)",
@@ -391,9 +418,60 @@ class AgentStore:
                     )
                     due.append({
                         "id": row["id"], "name": row["name"], "macro_id": row["macro_id"],
-                        "time_local": row["time_local"], "event_id": int(event_cursor.lastrowid),
+                        "time_local": row["time_local"],
+                        "auto_execute": bool(row["auto_execute"]),
+                        "run_date": date_key,
+                        "event_id": int(event_cursor.lastrowid),
                     })
         return due
+
+    def claim_routine_execution(self, routine_id: int, due_date: str) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                """INSERT OR IGNORE INTO routine_executions(
+                       routine_id,due_date,status,result_json,started_at
+                   ) VALUES(?,?,'started','{}',?)""",
+                (int(routine_id), str(due_date), time.time()),
+            )
+            return cursor.rowcount == 1
+
+    def finish_routine_execution(
+        self, routine_id: int, due_date: str, status: str,
+        result: dict[str, Any],
+    ) -> bool:
+        if status not in {"completed", "failed", "interrupted"}:
+            raise ValueError("Unsupported routine execution status.")
+        with self.connect() as db:
+            cursor = db.execute(
+                """UPDATE routine_executions SET status=?,result_json=?,finished_at=?
+                   WHERE routine_id=? AND due_date=? AND status='started'""",
+                (
+                    status, json.dumps(result, ensure_ascii=False, default=str),
+                    time.time(), int(routine_id), str(due_date),
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def routine_execution_rows(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT r.name,e.* FROM routine_executions e
+                   LEFT JOIN routines r ON r.id=e.routine_id
+                   ORDER BY e.started_at DESC LIMIT ?""",
+                (max(1, min(int(limit), 200)),),
+            ).fetchall()
+            return [
+                {
+                    "routine_id": int(row["routine_id"]),
+                    "routine_name": row["name"],
+                    "due_date": row["due_date"],
+                    "status": row["status"],
+                    "result": json.loads(row["result_json"]),
+                    "started_at": float(row["started_at"]),
+                    "finished_at": float(row["finished_at"]) if row["finished_at"] else None,
+                }
+                for row in rows
+            ]
 
     def set_routine_enabled(self, routine_id: int, enabled: bool) -> bool:
         with self.connect() as db:

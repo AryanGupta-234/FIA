@@ -151,6 +151,7 @@ Core routes:
 - `POST /undo/{id}`
 - `GET /macros`
 - learning and proactive feedback routes
+- `GET /routines`, `POST /routines`, `GET /routine-runs`
 
 ## Windows prototype setup
 

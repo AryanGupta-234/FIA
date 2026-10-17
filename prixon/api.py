@@ -549,22 +549,56 @@ def create_routine(payload: RoutineCreateRequest) -> dict[str, Any]:
     )
     if macro is None:
         raise HTTPException(404, "Only an owner-approved macro can be scheduled.")
+    if payload.auto_execute:
+        if not payload.confirmed:
+            raise HTTPException(
+                409, "Explicit owner confirmation is required for autonomous routine execution.",
+            )
+        steps = macro.get("plan", {}).get("steps", [])
+        if not steps:
+            raise HTTPException(422, "The approved macro has no executable steps.")
+        for step in steps:
+            action = runtime.registry.get(str(step.get("tool") or ""))
+            if action is None:
+                raise HTTPException(422, "The macro contains an unknown action.")
+            if (
+                action.risk not in {RiskTier.READ_ONLY, RiskTier.REVERSIBLE}
+                or action.sensitive_output
+                or action.name.startswith("macro.")
+                or (action.risk == RiskTier.REVERSIBLE and not action.undo_supported)
+            ):
+                raise HTTPException(
+                    422,
+                    detail={
+                        "message": "This macro is not eligible for L3 autonomous scheduling.",
+                        "action": action.name,
+                        "risk": action.risk.value,
+                    },
+                )
     try:
         routine_id = runtime.store.create_routine(
             payload.name, payload.macro_id, payload.time_local, payload.weekdays,
+            auto_execute=payload.auto_execute,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     runtime.store.audit("routine_created", {
         "routine_id": routine_id, "macro_id": payload.macro_id,
         "time_local": payload.time_local, "weekdays": payload.weekdays,
+        "auto_execute": payload.auto_execute,
     })
     return {
         "id": routine_id, "status": "scheduled",
         "timezone": "system_local", "time_local": payload.time_local,
         "weekdays": payload.weekdays,
-        "execution": "suggestion_only",
+        "auto_execute": payload.auto_execute,
+        "execution": "owner_approved_l3" if payload.auto_execute else "suggestion_only",
     }
+
+
+@router.get("/routine-runs")
+def list_routine_runs(limit: int = Query(50, ge=1, le=200)) -> list[dict[str, Any]]:
+    return runtime.store.routine_execution_rows(limit)
 
 
 @router.post("/routines/{routine_id}/status")

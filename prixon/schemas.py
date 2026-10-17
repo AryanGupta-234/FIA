@@ -178,6 +178,8 @@ class RoutineCreateRequest(BaseModel):
     macro_id: int = Field(gt=0)
     time_local: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     weekdays: list[int] = Field(default_factory=lambda: list(range(7)), min_length=1, max_length=7)
+    auto_execute: bool = False
+    confirmed: bool = False
 
 
 class RoutineStatusRequest(BaseModel):
