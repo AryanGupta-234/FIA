@@ -6,8 +6,8 @@ from pathlib import Path
 from difflib import SequenceMatcher
 from typing import Any
 
-from prixon.store import AgentStore
 from prixon.embeddings import cosine
+from prixon.store import AgentStore
 
 
 class EntityIndex:
