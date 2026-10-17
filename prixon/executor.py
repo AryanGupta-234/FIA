@@ -518,7 +518,9 @@ class ActionExecutor:
                 self.store.audit("automation_tier_timeout", {
                     "action": action_name, "tier": tier, "args": args,
                 })
-                continue
+                # The timed-out worker may still be executing; never start a second
+                # implementation of the same state-changing operation concurrently.
+                break
             except Exception as exc:
                 failures.append(f"{tier}:{type(exc).__name__}:{exc}")
                 self.store.audit("automation_tier_failed", {
