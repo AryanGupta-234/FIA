@@ -60,14 +60,14 @@ class OllamaClient:
 
     async def generate_json(
         self, system: str, prompt: str, schema: dict[str, Any],
-        *, max_tokens: int = 384,
+        *, max_tokens: int = 384, temperature: float = 0.0,
     ) -> dict[str, Any]:
         payload = {
             "model": self.model,
             "stream": False,
             "format": schema,
             "keep_alive": self.keep_alive,
-            "options": {"temperature": 0, "num_predict": max_tokens},
+            "options": {"temperature": max(0.0, min(0.3, temperature)), "num_predict": max_tokens},
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
@@ -143,7 +143,9 @@ class OllamaClient:
             "situation": situation,
             "similar_successful_episodes": (recent_episodes or [])[:3],
         }, ensure_ascii=False)
-        result = await self.generate_json(system, prompt, schema, max_tokens=256)
+        result = await self.generate_json(
+            system, prompt, schema, max_tokens=256, temperature=temperature,
+        )
         if result.get("action") not in names:
             raise ValueError("Ollama selected an action outside the supplied shortlist")
         return result
