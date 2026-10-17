@@ -150,6 +150,7 @@ class AgentRuntime:
                 tool=raw_step["tool"], args=step_args,
                 depends_on=raw_step.get("depends_on", []),
                 expected_outcome=raw_step.get("expected_outcome", "verified"),
+                confidence=float(raw_step.get("confidence", 0.85)),
             ))
         plan = AgentPlan(goal=macro["name"], steps=steps)
         validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
@@ -277,6 +278,7 @@ class AgentRuntime:
         ]
 
     async def preview(self, text: str) -> dict[str, Any]:
+        self._register_approved_macros()
         self.refresh_entities()
         normalized = " ".join(text.casefold().split())
         alias_used = False
@@ -345,7 +347,7 @@ class AgentRuntime:
         if clarification:
             route.status = "clarify"
         grounded = sum(1 for slot in action.required_slots if args.get(slot) not in (None, ""))
-        slot_score = grounded / max(1, len(action.required_slots))
+        slot_score = grounded / len(action.required_slots) if action.required_slots else 1.0
         candidate_scores = [candidate.score for candidate in route.candidates]
         margin = max(0.0, candidate_scores[0] - candidate_scores[1]) if len(candidate_scores) > 1 else max(route.confidence, 0.85)
         llm_score = float(arbitration.get("confidence", 0)) if arbitration else 0.0
@@ -404,7 +406,9 @@ class AgentRuntime:
         plan = AgentPlan(
             goal=text,
             steps=[PlanStep(
-                tool=action_name, args=merged_args, expected_outcome=", ".join(action.postconditions),
+                tool=action_name, args=merged_args,
+                expected_outcome=", ".join(action.postconditions),
+                confidence=float(preview.get("confidence", 0.0)),
             )],
             thought=ThoughtRecord(
                 observation="Fresh local machine snapshot and grounded action candidate.",
@@ -485,6 +489,35 @@ class AgentRuntime:
                 return {"status": "clarify", "clarification": clarification,
                         "plan": plan.model_dump(mode="json")}
             step.args = enriched
+            action = self.registry.get(step.tool)
+            if action is None:
+                return {"status": "rejected", "reason": "unknown_tool", "tool": step.tool}
+            route = IntentRouter(self.registry).route(clauses[index])
+            if route.status != "selected" or route.selected_action != step.tool:
+                return {
+                    "status": "clarify", "reason": "planner_and_reflex_disagree",
+                    "clause": clauses[index], "planned_action": step.tool,
+                    "reflex_action": route.selected_action,
+                    "clarification": "The plan does not agree with deterministic intent retrieval.",
+                }
+            grounded = sum(1 for slot in action.required_slots if step.args.get(slot) not in (None, ""))
+            slot_score = grounded / len(action.required_slots) if action.required_slots else 1.0
+            scores = [candidate.score for candidate in route.candidates]
+            margin = max(0.0, scores[0] - scores[1]) if len(scores) > 1 else (scores[0] if scores else route.confidence)
+            step.confidence = fuse_confidence(DecisionSignals(
+                retrieval_margin=margin,
+                slot_grounding=slot_score,
+                llm_confidence=0.0,
+                context_prior=1.0 if situation.get("foreground_app") else 0.5,
+                user_lexicon_hit=0.0,
+            ))
+            if action.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(
+                step.confidence, action.risk.value,
+            ):
+                return {
+                    "status": "clarify", "reason": "compound_step_below_risk_threshold",
+                    "step": index, "confidence": step.confidence, "risk": action.risk.value,
+                }
         validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
         if not validation.valid:
             return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
