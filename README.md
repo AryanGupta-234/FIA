@@ -50,7 +50,7 @@ Python:
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-ruff check fia tests
+ruff check fia prixon tests
 pytest
 ~~~
 
@@ -75,9 +75,12 @@ Implemented on the feature/prixon-agent-foundation branch:
 - L0–L5 intent pipeline foundations: deterministic fast paths, class-aware hard negatives, optional local BGE retrieval, entity grounding, confidence fusion and shortlist-only Ollama arbitration.
 - Windows perception for foreground windows, process inventory, installed Start Menu applications, CPU/RAM/battery/network telemetry and WinEvent/file-system observation.
 - Bounded plans, allowlisted Win32/Settings URI adapters, postcondition checks, undo journal and a global Ctrl+Alt+Pause kill switch.
-- Persistent goals, event/audit stores, suggestion cooldowns, owner aliases/corrections, delayed implicit learning and owner-approved macro proposals.
+- Persistent goals and event/audit stores; process, window, Downloads/Documents/Desktop, battery and scheduled-routine events; local-time schedules remain suggestion-only.
+- Native Win32 first, UI Automation and verified keyboard fallback for registered window controls, undo journal and bounded single-step failure replan.
+- Owner-approved promotion digest for language candidates, plus explicit macro proposals and approval.
+- A 315-case frozen/growing intent corpus with per-case and per-class metrics.
 - API routes under /api/v1/agent; local Ollama only, no hosted fallback.
 
-Execution is available only through explicit API requests or explicit goals. Background proactive behavior is suggestion-only. L4 actions always require confirmation. Semantic retrieval is optional and disabled by default until installed and enabled.
+Execution is available only through explicit API requests or explicit goals. Background proactive and scheduled-routine behavior is suggestion-only. L4 actions always require confirmation. Semantic retrieval is optional and disabled by default until installed and enabled.
 
 See docs/PRIXON_AGENT.md for setup, API endpoints, safeguards, phase status and current limitations.
