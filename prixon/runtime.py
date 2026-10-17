@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from difflib import SequenceMatcher
 from typing import Any
 
 from prixon.confidence import DecisionSignals, fuse_confidence, meets_risk_threshold
@@ -459,6 +460,7 @@ class AgentRuntime:
         self, text: str, args: dict[str, Any] | None = None, *,
         execute: bool = False, confirmed: bool = False, session_id: str = "local-session",
     ) -> dict[str, Any]:
+        self._discard_rephrased_pending_learning(text, session_id)
         matching_macro = self.matching_approved_macro(text)
         if matching_macro is not None:
             macro_preview = await self.preview(text)
@@ -547,12 +549,15 @@ class AgentRuntime:
             "utterance": text, "action": action_name, "success": result.success,
             "verified": result.verified, "confidence": confidence,
         })
-        learning_result = self.lexicon.observe(
-            text, action_name, success=result.success, session_id=session_id,
-            risk=action.risk, explicit=False,
-        )
-        if result.success and self.semantic is not None:
-            self.semantic.add_example(action_name, text)
+        if result.success:
+            self.store.queue_learning_signal(
+                text, action_name, session_id, action.risk.value, result.undo_id,
+            )
+        else:
+            self.lexicon.observe(
+                text, action_name, success=False, session_id=session_id,
+                risk=action.risk, explicit=False,
+            )
         response_text = self.format_observation(action_name, result.output) if result.success else None
         return {
             "status": "completed" if result.success else "failed",
@@ -667,6 +672,45 @@ class AgentRuntime:
         self.store.episode(original, ["L3", "L4", "L5"], plan.model_dump(mode="json"), outcome, result.get("reason"))
         return {"status": result["status"], "execution": result, "plan": plan.model_dump(mode="json")}
 
+    def _discard_rephrased_pending_learning(self, text: str, session_id: str) -> int:
+        normalized = " ".join(text.casefold().split())
+        discarded = 0
+        for pending in self.store.pending_learning_signals(older_than=time.time()):
+            if pending["session_id"] != session_id:
+                continue
+            previous = " ".join(pending["phrase"].casefold().split())
+            similarity = SequenceMatcher(None, previous, normalized).ratio()
+            is_correction = normalized.startswith(("no ", "not ", "stop ", "undo "))
+            if is_correction or similarity >= 0.45:
+                discarded += self.store.discard_pending_learning(signal_id=pending["id"])
+                if is_correction:
+                    self.store.add_negative_example(pending["phrase"], pending["action_name"])
+        return discarded
+
+    def process_pending_learning(self, delay_seconds: int = 30) -> dict[str, int]:
+        cutoff = time.time() - max(1, delay_seconds)
+        promoted = 0
+        discarded = 0
+        for pending in self.store.pending_learning_signals(older_than=cutoff):
+            if pending["undo_id"]:
+                undo = self.store.undo_record(pending["undo_id"])
+                if not undo or undo["status"] in {"undone", "failed"}:
+                    discarded += self.store.discard_pending_learning(signal_id=pending["id"])
+                    continue
+            action = self.registry.get(pending["action_name"])
+            if action is None:
+                discarded += self.store.discard_pending_learning(signal_id=pending["id"])
+                continue
+            result = self.lexicon.observe(
+                pending["phrase"], pending["action_name"], success=True,
+                session_id=pending["session_id"], risk=action.risk, explicit=False,
+            )
+            if self.semantic is not None:
+                self.semantic.add_example(pending["action_name"], pending["phrase"])
+            promoted += int(result.status == "promoted")
+            self.store.discard_pending_learning(signal_id=pending["id"])
+        return {"processed": promoted + discarded, "promoted": promoted, "discarded": discarded}
+
     @staticmethod
     def format_observation(action_name: str, output: dict[str, Any]) -> str:
         if action_name == "system.status":
@@ -737,5 +781,6 @@ class AgentRuntime:
         except Exception as exc:
             success, error = False, f"{type(exc).__name__}:{exc}"
         self.store.finish_undo(undo_id, "undone" if success else "failed")
+        self.store.discard_pending_learning(undo_id=undo_id)
         self.store.audit("undo_attempted", {"undo_id": undo_id, "success": success, "error": error})
         return {"status": "undone" if success else "failed", "error": error}
