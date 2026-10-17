@@ -42,7 +42,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 ### Evaluation/performance
 - Frozen + growing JSONL intent benchmark, including wrong-selection rate separately from safe abstention.
 - Offline confidence-weight fitting.
-- Prompt/response size, latency, load-duration and keep-alive logging with rolling p50/p95 summaries; failed Ollama attempts are included in call and latency metrics.
+- Prompt/response size, latency, load-duration, keep-alive, lifetime success/failure, malformed-JSON and JSON-validity metrics, plus rolling p50/p95 summaries.
 - Preview-only target-machine benchmark CLI for end-to-end latency, LLM-call share and token measurements.
 
 ## Target-machine benchmark
@@ -54,7 +54,7 @@ py -3.11 -m pip install -e ".[dev,windows]"
 py -3.11 -m prixon.benchmark --split all --output artifacts/prixon-benchmark-latest.json
 ~~~
 
-This benchmark calls the preview/decision path only; it does not execute Windows actions. It archives end-to-end p50/p95 latency, wrong-selection and clarification rates, local-model request share, call count and Ollama token totals. Run it separately for `--split frozen` and `--split growing` when comparing a routing or confidence-policy change. Hardware results must be measured on the target laptop; CI results are not a substitute.
+This benchmark calls the preview/decision path only; it does not execute Windows actions. It archives end-to-end p50/p95 latency, wrong-selection and clarification rates, local-model request share, call count, JSON-validity rate and Ollama token totals. Run it separately for `--split frozen` and `--split growing` when comparing a routing or confidence-policy change. Hardware results must be measured on the target laptop; CI results are not a substitute.
 
 ## Safety boundaries
 - Ollama endpoint is loopback-only; there is no hosted-model fallback.

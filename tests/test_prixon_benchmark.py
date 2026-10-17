@@ -7,21 +7,33 @@ from prixon.ollama import OllamaClient
 
 def test_ollama_metrics_summary_reports_success_and_failed_attempts():
     client = OllamaClient()
-    client.call_count = 3
+    client.call_count = 4
+    client.successful_call_count = 2
+    client.failed_call_count = 2
+    client.json_valid_count = 2
+    client.json_invalid_count = 1
     client.metrics_history.extend([
-        {"call_index": 1, "success": True, "latency_ms": 10.0,
+        {"call_index": 1, "success": True, "json_valid": True, "latency_ms": 10.0,
          "prompt_eval_count": 5, "eval_count": 2},
-        {"call_index": 2, "success": False, "latency_ms": 30.0,
+        {"call_index": 2, "success": False, "json_valid": None, "latency_ms": 20.0,
          "error": "ReadTimeout"},
-        {"call_index": 3, "success": True, "latency_ms": 20.0,
+        {"call_index": 3, "success": True, "json_valid": True, "latency_ms": 30.0,
          "prompt_eval_count": 7, "eval_count": 4},
+        {"call_index": 4, "success": False, "json_valid": False, "latency_ms": 40.0,
+         "error": "JSONDecodeError"},
     ])
     summary = client.metrics_summary()
-    assert summary["total_calls"] == 3
-    assert summary["failed_calls"] == 1
-    assert summary["success_rate"] == 0.6667
+    assert summary["total_calls"] == 4
+    assert summary["successful_calls"] == 2
+    assert summary["failed_calls"] == 2
+    assert summary["success_rate"] == 0.5
+    assert summary["json_validity_samples"] == 3
+    assert summary["json_valid_responses"] == 2
+    assert summary["json_invalid_responses"] == 1
+    assert summary["json_validity_rate"] == 0.6667
+    assert summary["retained_failed_calls"] == 2
     assert summary["latency_p50_ms"] == 20.0
-    assert summary["latency_p95_ms"] == 30.0
+    assert summary["latency_p95_ms"] == 40.0
     assert summary["prompt_tokens_total"] == 12
     assert summary["completion_tokens_total"] == 6
 
@@ -29,10 +41,10 @@ def test_ollama_metrics_summary_reports_success_and_failed_attempts():
 def test_benchmark_summary_calculates_latency_and_local_model_share():
     rows = [
         {"latency_ms": 10.0, "status": "selected", "action": "a", "correct": True, "llm_calls": 1,
-         "prompt_tokens": 5, "completion_tokens": 3},
+         "prompt_tokens": 5, "completion_tokens": 3, "json_valid_calls": 1},
         {"latency_ms": 20.0, "status": "clarify", "action": None, "correct": True, "llm_calls": 0},
         {"latency_ms": 30.0, "status": "selected", "action": "b", "correct": False, "wrong_selection": True,
-         "llm_calls": 2, "prompt_tokens": 8, "completion_tokens": 4},
+         "llm_calls": 2, "prompt_tokens": 8, "completion_tokens": 4, "json_invalid_calls": 1},
         {"latency_ms": 40.0, "status": "unresolved", "action": None, "correct": False, "llm_calls": 0},
     ]
     report = summarize_benchmark_rows(rows)
@@ -45,6 +57,10 @@ def test_benchmark_summary_calculates_latency_and_local_model_share():
     assert report["latency_ms"] == {"p50": 20.0, "p95": 40.0, "mean": 25.0, "max": 40.0}
     assert report["prompt_tokens"] == 13
     assert report["completion_tokens"] == 7
+    assert report["json_validity_samples"] == 2
+    assert report["json_valid_responses"] == 1
+    assert report["json_invalid_responses"] == 1
+    assert report["json_validity_rate"] == 0.5
 
 def test_runtime_benchmark_uses_preview_only_and_captures_local_model_usage():
     class FakeOllama:
@@ -71,6 +87,7 @@ def test_runtime_benchmark_uses_preview_only_and_captures_local_model_usage():
                 "call_index": self.ollama.call_count,
                 "prompt_eval_count": 11,
                 "eval_count": 4,
+                "json_valid": True,
             })
             return {
                 "status": "selected",
@@ -91,4 +108,6 @@ def test_runtime_benchmark_uses_preview_only_and_captures_local_model_usage():
     assert report["summary"]["llm_calls"] == 1
     assert report["summary"]["prompt_tokens"] == 11
     assert report["summary"]["completion_tokens"] == 4
+    assert report["summary"]["json_validity_samples"] == 1
+    assert report["summary"]["json_validity_rate"] == 1.0
     assert report["by_split"]["frozen"]["requests"] == 1

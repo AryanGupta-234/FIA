@@ -38,6 +38,10 @@ class OllamaClient:
         self.max_prompt_chars = 6000
         self.last_metrics: dict[str, Any] = {}
         self.call_count = 0
+        self.successful_call_count = 0
+        self.failed_call_count = 0
+        self.json_valid_count = 0
+        self.json_invalid_count = 0
         self.metrics_history: deque[dict[str, Any]] = deque(maxlen=2000)
 
     def metrics_summary(self) -> dict[str, Any]:
@@ -55,12 +59,24 @@ class OllamaClient:
 
         return {
             "total_calls": self.call_count,
-            "retained_samples": len(calls),
-            "failed_calls": sum(not item.get("success", True) for item in calls),
+            "successful_calls": self.successful_call_count,
+            "failed_calls": self.failed_call_count,
             "success_rate": (
-                round(sum(bool(item.get("success", True)) for item in calls) / len(calls), 4)
-                if calls else None
+                round(self.successful_call_count / self.call_count, 4)
+                if self.call_count else None
             ),
+            "json_validity_samples": self.json_valid_count + self.json_invalid_count,
+            "json_valid_responses": self.json_valid_count,
+            "json_invalid_responses": self.json_invalid_count,
+            "json_validity_rate": (
+                round(
+                    self.json_valid_count / (self.json_valid_count + self.json_invalid_count),
+                    4,
+                )
+                if self.json_valid_count + self.json_invalid_count else None
+            ),
+            "retained_samples": len(calls),
+            "retained_failed_calls": sum(not item.get("success", True) for item in calls),
             "latency_p50_ms": percentile(latency, 0.50),
             "latency_p95_ms": percentile(latency, 0.95),
             "mean_latency_ms": round(sum(latency) / len(latency), 2) if latency else None,
@@ -128,6 +144,7 @@ class OllamaClient:
         call_index = self.call_count
         data: dict[str, Any] = {}
         raw = ""
+        json_valid: bool | None = None
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(f"{self.base_url}/api/chat", json=payload)
@@ -135,10 +152,20 @@ class OllamaClient:
                 data = response.json()
             message = data.get("message", {})
             raw = message.get("content", "")
-            parsed = json.loads(raw)
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError):
+                json_valid = False
+                self.json_invalid_count += 1
+                raise
             if not isinstance(parsed, dict):
+                json_valid = False
+                self.json_invalid_count += 1
                 raise ValueError("Ollama response must be a JSON object")
+            json_valid = True
+            self.json_valid_count += 1
         except Exception as exc:
+            self.failed_call_count += 1
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
             self.last_metrics = {
                 "call_index": call_index,
@@ -148,6 +175,7 @@ class OllamaClient:
                 "response_bytes": len(raw.encode("utf-8")) if isinstance(raw, str) else 0,
                 "latency_ms": duration_ms,
                 "success": False,
+                "json_valid": json_valid,
                 "error": type(exc).__name__,
                 "keep_alive": self.keep_alive,
             }
@@ -155,6 +183,7 @@ class OllamaClient:
             logger.warning("ollama_failed metrics=%s", self.last_metrics)
             raise
 
+        self.successful_call_count += 1
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         self.last_metrics = {
             "call_index": call_index,
@@ -168,6 +197,7 @@ class OllamaClient:
             "prompt_eval_count": data.get("prompt_eval_count"),
             "eval_count": data.get("eval_count"),
             "success": True,
+            "json_valid": True,
             "keep_alive": self.keep_alive,
         }
         self.metrics_history.append(dict(self.last_metrics))

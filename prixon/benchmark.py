@@ -54,6 +54,26 @@ def summarize_benchmark_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "prompt_tokens": sum(int(row.get("prompt_tokens", 0)) for row in rows),
         "completion_tokens": sum(int(row.get("completion_tokens", 0)) for row in rows),
+        "json_valid_responses": sum(int(row.get("json_valid_calls", 0)) for row in rows),
+        "json_invalid_responses": sum(int(row.get("json_invalid_calls", 0)) for row in rows),
+        "json_validity_samples": sum(
+            int(row.get("json_valid_calls", 0)) + int(row.get("json_invalid_calls", 0))
+            for row in rows
+        ),
+        "json_validity_rate": (
+            round(
+                sum(int(row.get("json_valid_calls", 0)) for row in rows)
+                / sum(
+                    int(row.get("json_valid_calls", 0)) + int(row.get("json_invalid_calls", 0))
+                    for row in rows
+                ),
+                4,
+            )
+            if sum(
+                int(row.get("json_valid_calls", 0)) + int(row.get("json_invalid_calls", 0))
+                for row in rows
+            ) else None
+        ),
         "latency_ms": {
             "p50": _percentile(latencies, 0.50),
             "p95": _percentile(latencies, 0.95),
@@ -101,6 +121,8 @@ async def benchmark_runtime(
         )
         prompt_tokens = sum(int(item.get("prompt_eval_count") or 0) for item in new_metrics)
         completion_tokens = sum(int(item.get("eval_count") or 0) for item in new_metrics)
+        json_valid_calls = sum(item.get("json_valid") is True for item in new_metrics)
+        json_invalid_calls = sum(item.get("json_valid") is False for item in new_metrics)
         reason = str(result.get("reason") or result.get("status") or "unknown")
         reasons[reason] += 1
         records.append({
@@ -113,6 +135,8 @@ async def benchmark_runtime(
             "llm_calls": new_calls,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
+            "json_valid_calls": json_valid_calls,
+            "json_invalid_calls": json_invalid_calls,
             "latency_ms": latency_ms,
             "reason": reason,
             "error": error,
