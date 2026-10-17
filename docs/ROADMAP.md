@@ -117,7 +117,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Priority ordering, wall-clock/step/action budgets and loop abort
 - [x] Global Ctrl+Alt+Pause kill switch
 - [x] Proactive suggestions are suppressed in focus/fullscreen and are suggestion-only
-- [ ] Add voice kill command
+- [x] Push-to-listen local Vosk voice kill via Ctrl+Alt+V; fixed phrase grammar only, finite capture window and no audio/transcript persistence
 
 #### Phase 7 — Evolving language and owner learning
 - [x] Explicit alias teaching, corrections, negative memory and contextual entity aliases

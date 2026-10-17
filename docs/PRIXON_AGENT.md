@@ -19,7 +19,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - WinEvent foreground/window events, process deltas and Downloads completion events.
 - Explicit clipboard metadata and confirmation-gated text reads; clipboard text is excluded from persistent audit/episode records.
 - Explicit-goal continuation and local owner context (time/day/routine state).
-- Global Ctrl+Alt+Pause kill switch.
+- Global Ctrl+Alt+Pause kill switch, plus opt-in Ctrl+Alt+V push-to-listen voice kill.
 - Suggest-only proactive engine with cooldown, focus/fullscreen suppression and persistent annoyance.
 
 ### Safe execution
@@ -66,6 +66,16 @@ This benchmark calls the preview/decision path only; it does not execute Windows
 - Clipboard text is fetched only for a direct owner request after L4 confirmation; it is returned to the requester but never written to audit, episode or persistent goal records.
 - Vision/OCR and app-specific adapters remain future automation tiers.
 
+## Optional local voice kill
+
+Voice kill is opt-in and uses a local Vosk model. It does not keep the microphone open. Press `Ctrl+Alt+V`, then say **“Prixon stop”** within the short capture window. Only fixed stop/halt/abort phrases are accepted.
+
+~~~powershell
+./scripts/setup-prixon-voice.ps1
+~~~
+
+The setup script installs the optional Vosk and sounddevice packages, downloads the small English model, writes its local path into `.env`, and enables voice kill. Disable it with `PRIXON_VOICE_KILL_ENABLED=false`. Status is available at `GET /api/v1/agent/voice/status`.
+
 ## API
 Agent routes are mounted under `/api/v1/agent`.
 
@@ -78,6 +88,7 @@ Core routes:
 - `POST /runtime/start`
 - `POST /runtime/stop`
 - `POST /kill`
+- `GET /voice/status`
 - `GET /audit`
 - `POST /undo/{id}`
 - `GET /macros`
