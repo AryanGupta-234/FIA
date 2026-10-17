@@ -135,5 +135,5 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 
 #### Phase 9 — Optional research extensions
 - [ ] LoRA using only reviewed labels and frozen-set evidence
-- [ ] Multilingual/code-mixed embedding evaluation
+- [x] Separate 40-case Hindi/Hinglish/Devanagari evaluation corpus and configurable local multilingual embedding model; benchmark comparison still pending
 - [ ] Voice-first interaction and UI polish

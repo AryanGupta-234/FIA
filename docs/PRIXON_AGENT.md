@@ -49,6 +49,21 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - Prompt/response size, latency, load-duration, keep-alive, lifetime success/failure, malformed-JSON and JSON-validity metrics, plus rolling p50/p95 summaries.
 - Preview-only target-machine benchmark CLI for end-to-end latency, LLM-call share and token measurements.
 
+## Multilingual and code-mixed evaluation
+
+A separate 40-case Hindi/Hinglish/Devanagari evaluation corpus is stored at `tests/data/prixon_multilingual_eval.jsonl`. It is intentionally separate from the English frozen/growing benchmark.
+
+To measure it with local multilingual embeddings:
+
+~~~powershell
+$env:PRIXON_SEMANTIC_ENABLED="true"
+$env:PRIXON_SEMANTIC_MODEL_NAME="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+py -3.11 -m pip install -e ".[semantic]"
+py -3.11 -m prixon.benchmark --dataset tests/data/prixon_multilingual_eval.jsonl --output artifacts/prixon-multilingual-v1.json
+~~~
+
+The model name is configurable because multilingual embeddings are an experiment, not the default laptop profile. Compare the report against the default BGE model before promoting a model or threshold. The evaluation corpus never trains or updates the model.
+
 ## Target-machine benchmark
 
 Run from the repository root on the Windows device with Prixon configured and the local Ollama model already pulled:
