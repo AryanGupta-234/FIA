@@ -36,6 +36,7 @@ class MacroPromoter:
                 "args": safe_args,
                 "depends_on": dependencies,
                 "expected_outcome": step.get("expected_outcome", "verified"),
+                "confidence": step.get("confidence", 0.85),
             })
         return {"goal": plan.get("goal", "Approved personal routine"), "steps": steps}
 
