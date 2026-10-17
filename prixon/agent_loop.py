@@ -6,7 +6,10 @@ import os
 import time
 from typing import Any
 
-from prixon.events import EventBus, ProcessDeltaObserver, WinEventObserver
+from prixon.events import (
+    EventBus, FileSystemEventObserver, ProcessDeltaObserver, WinEventObserver,
+)
+from prixon.consolidation import MacroPromoter
 from prixon.kill_switch import GlobalHotkey
 from prixon.schemas import AgentPlan
 from prixon.store import AgentStore
@@ -62,7 +65,9 @@ class AgentLoop:
             self.bus, interval_seconds=max(2.0, runtime.settings.agent_loop_poll_seconds),
         )
         self.window_observer = WinEventObserver(self.bus)
+        self.file_observer = FileSystemEventObserver(self.bus)
         self.hotkey = GlobalHotkey(runtime.kill_switch)
+        self._last_consolidation = float(self.store.get_setting("learning.last_consolidation", 0))
         self._task: asyncio.Task | None = None
         self._running = False
         self._last_battery_check = 0.0
@@ -83,12 +88,17 @@ class AgentLoop:
         self._running = True
         await self.process_observer.start()
         self.window_observer.start()
+        downloads_watched = self.file_observer.start()
         hotkey_registered = self.hotkey.start()
         self._task = asyncio.create_task(self._run(), name="PrixonAgentLoop")
-        self.store.audit("agent_loop_started", {"global_hotkey_registered": hotkey_registered})
+        self.store.audit("agent_loop_started", {
+            "global_hotkey_registered": hotkey_registered,
+            "downloads_watched": downloads_watched,
+        })
         return {
             "status": "started",
             "global_hotkey": "Ctrl+Alt+Pause" if hotkey_registered else "unavailable",
+            "downloads_watched": downloads_watched,
         }
 
     async def stop(self, reason: str = "owner_requested") -> dict[str, Any]:
@@ -102,6 +112,7 @@ class AgentLoop:
         self._task = None
         await self.process_observer.stop()
         self.window_observer.stop()
+        self.file_observer.stop()
         self.hotkey.stop()
         self.store.audit("agent_loop_stopped", {"reason": reason})
         return {"status": "stopped", "reason": reason}
@@ -134,6 +145,8 @@ class AgentLoop:
                     }
                     self._suggestions.append(item)
                     self._suggestions = self._suggestions[-50:]
+            if now - self._last_consolidation >= 86400:
+                await self._run_consolidation(now)
             await self._continue_explicit_goals()
             await asyncio.sleep(max(0.5, self.runtime.settings.agent_loop_poll_seconds))
 
@@ -148,6 +161,20 @@ class AgentLoop:
             self._last_battery_low = low
         except Exception:
             logger.exception("Battery event check failed")
+
+    async def _run_consolidation(self, now: float) -> None:
+        try:
+            lexicon_result = self.runtime.lexicon.consolidate()
+            macro_result = await asyncio.to_thread(
+                MacroPromoter(self.store, self.runtime.registry).consolidate,
+            )
+            self._last_consolidation = now
+            self.store.set_setting("learning.last_consolidation", now)
+            self.store.audit("nightly_consolidation_finished", {
+                "lexicon": lexicon_result, "macros_proposed": macro_result["count"],
+            })
+        except Exception:
+            logger.exception("Nightly consolidation failed")
 
     async def _continue_explicit_goals(self) -> None:
         for goal in self.store.goals(("pending",)):
