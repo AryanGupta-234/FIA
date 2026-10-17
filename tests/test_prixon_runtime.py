@@ -273,3 +273,22 @@ def test_learning_reset_removes_macros_and_pending_signals(store):
     assert removed["macros"] == 1
     assert removed["pending_learning"] == 1
     assert store.pending_learning_signals() == []
+
+
+def test_close_window_verb_routes_to_control_class():
+    result = IntentRouter().route("please close this window")
+    assert result.selected_action == "window.close"
+
+
+def test_read_only_queries_execute_without_an_execute_flag(store):
+    import asyncio
+
+    from prixon.runtime import AgentRuntime
+
+    runtime = AgentRuntime(store=store)
+    try:
+        result = asyncio.run(runtime.run_request("show RAM usage"))
+        assert result["status"] == "completed"
+        assert "RAM usage" in result["answer"]
+    finally:
+        runtime.executor.shutdown()
