@@ -209,7 +209,8 @@ class AgentLoop:
                 plan = AgentPlan.model_validate(raw_plan)
                 self.store.set_goal_status(goal["id"], "active")
                 result = await asyncio.to_thread(
-                    self.runtime.executor.execute_plan, plan, confirmed=False,
+                    self.runtime.executor.execute_plan, plan,
+                    confirmed=bool(payload.get("confirmed", False)),
                 )
                 status = "completed" if result.get("status") == "completed" else "blocked"
                 self.store.set_goal_status(goal["id"], status)
