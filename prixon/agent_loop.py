@@ -134,7 +134,7 @@ class AgentLoop:
                 self._check_battery()
                 self._last_battery_check = now
             for event in self.bus.drain(100):
-                self.store.enqueue_event(event.event_type, event.payload)
+                persisted_id = self.store.enqueue_event(event.event_type, event.payload)
                 if event.event_type == "foreground_changed":
                     if event.payload.get("sensitive"):
                         self.runtime.references.clear()
@@ -166,6 +166,7 @@ class AgentLoop:
                     }
                     self._suggestions.append(item)
                     self._suggestions = self._suggestions[-50:]
+                self.store.mark_event_processed(persisted_id)
             if now - self._last_consolidation >= 86400:
                 await self._run_consolidation(now)
             await self._continue_explicit_goals()
