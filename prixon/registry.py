@@ -4,7 +4,7 @@ from prixon.schemas import ActionSpec, IntentClass, RiskTier
 
 
 class ActionRegistry:
-    """Allowlisted actions; the model can select these but cannot create commands."""
+    """Allowlisted action contracts; models can select identifiers, never define commands."""
 
     def __init__(self, actions: list[ActionSpec] | None = None) -> None:
         self._actions: dict[str, ActionSpec] = {}
@@ -23,7 +23,10 @@ class ActionRegistry:
         return list(self._actions.values())
 
     def by_class(self, intent_class: IntentClass) -> list[ActionSpec]:
-        return [a for a in self._actions.values() if a.intent_class == intent_class]
+        return [action for action in self._actions.values() if action.intent_class == intent_class]
+
+    def shortlist(self, names: list[str], limit: int = 5) -> list[ActionSpec]:
+        return [self._actions[name] for name in names if name in self._actions][:limit]
 
 
 def default_actions() -> list[ActionSpec]:
@@ -31,67 +34,100 @@ def default_actions() -> list[ActionSpec]:
         ActionSpec(
             name="system.status",
             description="Read a compact Windows system status snapshot.",
-            examples=("system status", "how is my pc doing", "show system health"),
-            intent_class=IntentClass.QUERY,
-            verb_type="read",
-            target_type="system",
+            examples=("system status", "how is my pc doing", "show system health", "check my computer"),
+            intent_class=IntentClass.QUERY, verb_type="read", target_type="system",
             postconditions=("status_snapshot_returned",),
         ),
         ActionSpec(
             name="process.list",
             description="List currently running processes.",
-            examples=("list running processes", "what apps are running"),
-            intent_class=IntentClass.QUERY,
-            verb_type="read",
-            target_type="process_collection",
+            examples=("list running processes", "what apps are running", "show active applications"),
+            intent_class=IntentClass.QUERY, verb_type="read", target_type="process_collection",
             postconditions=("process_list_returned",),
         ),
         ActionSpec(
+            name="system.battery",
+            description="Read battery charge and power state.",
+            examples=("check battery", "how much battery is left", "battery percentage"),
+            intent_class=IntentClass.QUERY, verb_type="read", target_type="battery",
+            postconditions=("battery_snapshot_returned",),
+        ),
+        ActionSpec(
+            name="system.network",
+            description="Read network interface and byte-counter status.",
+            examples=("check network status", "show network diagnostics", "how is wifi"),
+            intent_class=IntentClass.QUERY, verb_type="read", target_type="network",
+            postconditions=("network_snapshot_returned",),
+        ),
+        ActionSpec(
             name="app.launch",
-            description="Launch an installed application by its resolved app identity.",
-            examples=("open notepad", "launch calculator", "fire up paint"),
-            intent_class=IntentClass.LAUNCH,
-            verb_type="launch",
-            target_type="installed_application",
+            description="Launch a grounded installed application by its registered identity.",
+            examples=("open notepad", "launch calculator", "fire up paint", "start calculator"),
+            intent_class=IntentClass.LAUNCH, verb_type="launch", target_type="installed_application",
             required_slots=("application",),
-            risk=RiskTier.REVERSIBLE,
+            parameter_schema={"application": "entity:application", "application_target": "path:allowlisted"},
+            preconditions=("installed_application_resolves",),
             postconditions=("target_process_started",),
-            undo_supported=True,
+            risk=RiskTier.REVERSIBLE, undo_supported=True,
+            automation_tiers=("native_api", "shell_uri"),
         ),
         ActionSpec(
             name="window.minimize",
-            description="Minimize a grounded foreground or named application window.",
-            examples=("minimize this window", "minimize notepad"),
-            intent_class=IntentClass.CONTROL,
-            verb_type="minimize",
-            target_type="window",
+            description="Minimize the grounded foreground window.",
+            examples=("minimize this window", "minimize current window"),
+            intent_class=IntentClass.CONTROL, verb_type="minimize", target_type="window",
             required_slots=("window",),
-            risk=RiskTier.REVERSIBLE,
-            postconditions=("window_is_minimized",),
-            undo_supported=True,
+            parameter_schema={"window": "entity:window", "hwnd": "integer:window_handle"},
+            preconditions=("window_exists",), postconditions=("window_is_minimized",),
+            risk=RiskTier.REVERSIBLE, undo_supported=True,
+            automation_tiers=("win32",),
+        ),
+        ActionSpec(
+            name="window.restore",
+            description="Restore the grounded foreground window.",
+            examples=("restore this window", "unminimize this window"),
+            intent_class=IntentClass.CONTROL, verb_type="restore", target_type="window",
+            required_slots=("window",),
+            parameter_schema={"window": "entity:window", "hwnd": "integer:window_handle"},
+            preconditions=("window_exists",), postconditions=("window_is_restored",),
+            risk=RiskTier.REVERSIBLE, undo_supported=True,
+            automation_tiers=("win32",),
         ),
         ActionSpec(
             name="volume.set",
-            description="Set the Windows master volume to a specified level.",
-            examples=("set volume to 30 percent", "turn volume down to 20"),
-            intent_class=IntentClass.SYSTEM_SETTING,
-            verb_type="set",
-            target_type="audio_volume",
+            description="Set Windows master volume to a requested level.",
+            examples=("set volume to 30 percent", "turn volume down to 20", "volume at 50"),
+            intent_class=IntentClass.SYSTEM_SETTING, verb_type="set", target_type="audio_volume",
             required_slots=("level",),
-            risk=RiskTier.REVERSIBLE,
+            parameter_schema={"level": "number:0..100"},
+            preconditions=("audio_endpoint_available",),
             postconditions=("volume_equals_requested_level",),
-            undo_supported=True,
+            risk=RiskTier.REVERSIBLE, undo_supported=True,
+            automation_tiers=("native_api",),
+        ),
+        ActionSpec(
+            name="settings.open",
+            description="Open an allowlisted Windows Settings page.",
+            examples=("open display settings", "open sound settings", "open bluetooth settings",
+                      "open wifi settings", "open battery settings"),
+            intent_class=IntentClass.SYSTEM_SETTING, verb_type="open", target_type="settings_page",
+            required_slots=("setting",),
+            parameter_schema={"setting": "enum:approved_settings_uri"},
+            preconditions=("setting_uri_allowlisted",),
+            postconditions=("settings_page_opened",),
+            risk=RiskTier.REVERSIBLE, undo_supported=True,
+            automation_tiers=("uri_scheme",),
         ),
         ActionSpec(
             name="file.quarantine",
-            description="Move a selected file into a restorable quarantine directory.",
-            examples=("quarantine this file", "move this file to quarantine"),
-            intent_class=IntentClass.FILE_OPERATION,
-            verb_type="move",
-            target_type="file",
+            description="Move an explicitly selected user file into a restorable quarantine folder.",
+            examples=("quarantine this file", "move selected file to quarantine"),
+            intent_class=IntentClass.FILE_OPERATION, verb_type="move", target_type="file",
             required_slots=("file",),
-            risk=RiskTier.ALWAYS_CONFIRM,
+            parameter_schema={"file": "path:user_profile_file"},
+            preconditions=("file_exists_in_user_profile", "owner_confirmed"),
             postconditions=("file_in_quarantine",),
-            undo_supported=True,
+            risk=RiskTier.ALWAYS_CONFIRM, undo_supported=True,
+            automation_tiers=("native_api",),
         ),
     ]
