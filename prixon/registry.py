@@ -287,6 +287,23 @@ def default_actions() -> list[ActionSpec]:
             automation_tiers=("app_adapter",),
         ),
         ActionSpec(
+            name="office.status",
+            description="Inspect active Word, Excel and PowerPoint session counts and unsaved-state counts without reading document content.",
+            examples=(
+                "check office documents", "how many word documents are open",
+                "check if excel has unsaved work", "show office session status",
+                "are there any unsaved office documents", "check word excel and powerpoint",
+                "how many spreadsheets are open", "check open office sessions",
+            ),
+            hard_negatives=(
+                "read document content", "open an office document", "save all documents",
+                "close every office window",
+            ),
+            intent_class=IntentClass.QUERY, verb_type="inspect", target_type="office_session",
+            postconditions=("office_state_returned",),
+            risk=RiskTier.READ_ONLY, automation_tiers=("app_adapter",),
+        ),
+        ActionSpec(
             name="settings.open", description="Open an allowlisted Windows Settings page.",
             examples=("open display settings", "open sound settings", "open bluetooth settings",
                       "open wifi settings", "open battery settings", "open night light settings",
