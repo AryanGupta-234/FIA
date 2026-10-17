@@ -1,0 +1,110 @@
+from __future__ import annotations
+
+import os
+import platform
+import time
+from pathlib import Path
+from typing import Any
+
+import psutil
+
+
+class WindowsPerception:
+    """Compact, privacy-bounded machine observations.
+
+    Does not read page text, URLs, cookies, passwords, form values or credential dialogs.
+    """
+
+    @staticmethod
+    def _foreground_window() -> dict[str, Any] | None:
+        if os.name != "nt":
+            return None
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        length = user32.GetWindowTextLengthW(hwnd)
+        buffer = ctypes.create_unicode_buffer(min(length + 1, 512))
+        user32.GetWindowTextW(hwnd, buffer, len(buffer))
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return {"handle": int(hwnd), "title": buffer.value[:500], "pid": int(pid.value)}
+
+    @staticmethod
+    def _installed_apps() -> list[dict[str, str]]:
+        if os.name != "nt":
+            return []
+        roots = [
+            Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+            Path(os.environ.get("PROGRAMDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+        ]
+        apps: dict[str, str] = {}
+        for root in roots:
+            if not root.exists():
+                continue
+            try:
+                for shortcut in root.rglob("*.lnk"):
+                    name = shortcut.stem.strip()
+                    if name and name.casefold() not in apps:
+                        apps[name.casefold()] = str(shortcut)
+            except OSError:
+                continue
+        return [{"name": name, "target": target} for name, target in apps.items()]
+
+    def processes(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for process in psutil.process_iter(["pid", "name", "exe", "status"]):
+            try:
+                item = process.info
+                rows.append({
+                    "pid": int(item["pid"]),
+                    "name": str(item.get("name") or ""),
+                    "exe": item.get("exe"),
+                    "status": str(item.get("status") or ""),
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+            if len(rows) >= limit:
+                break
+        return rows
+
+    def snapshot(self) -> dict[str, Any]:
+        memory = psutil.virtual_memory()
+        try:
+            battery = psutil.sensors_battery()
+            battery_state = None if battery is None else {
+                "percent": round(float(battery.percent), 1),
+                "plugged_in": bool(battery.power_plugged),
+                "seconds_left": battery.secsleft if battery.secsleft >= 0 else None,
+            }
+        except (AttributeError, OSError):
+            battery_state = None
+        try:
+            network = psutil.net_io_counters()
+            network_state = {
+                "bytes_sent": int(network.bytes_sent),
+                "bytes_received": int(network.bytes_recv),
+            }
+        except (AttributeError, OSError):
+            network_state = None
+        return {
+            "platform": platform.platform(),
+            "is_windows": os.name == "nt",
+            "captured_at": time.time(),
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory": {
+                "total_bytes": int(memory.total),
+                "available_bytes": int(memory.available),
+                "percent": float(memory.percent),
+            },
+            "battery": battery_state,
+            "network": network_state,
+            "foreground_window": self._foreground_window(),
+            "process_count": len(psutil.pids()),
+        }
+
+    def installed_apps(self) -> list[dict[str, str]]:
+        return self._installed_apps()
