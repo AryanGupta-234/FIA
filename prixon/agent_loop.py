@@ -282,6 +282,21 @@ class AgentLoop:
                 continue
             try:
                 plan = AgentPlan.model_validate(raw_plan)
+                sensitive_actions = [
+                    step.tool for step in plan.steps
+                    if (
+                        self.runtime.registry.get(step.tool)
+                        and self.runtime.registry.get(step.tool).sensitive_output
+                    )
+                ]
+                if sensitive_actions:
+                    self.store.set_goal_status(goal["id"], "blocked")
+                    self.store.audit("goal_blocked_interactive_sensitive_output", {
+                        "goal_id": goal["id"],
+                        "actions": sensitive_actions,
+                        "reason": "sensitive output is limited to direct interactive requests",
+                    })
+                    continue
                 self.store.set_goal_status(goal["id"], "active")
                 result = await asyncio.to_thread(
                     self.runtime.executor.execute_plan, plan,
@@ -295,7 +310,8 @@ class AgentLoop:
                     result.get("reason"),
                 )
                 self.store.audit("goal_execution_finished", {
-                    "goal_id": goal["id"], "status": status, "result": result,
+                    "goal_id": goal["id"], "status": status,
+                    "result": self.runtime._safe_execution_audit(result),
                 })
             except Exception as exc:
                 self.store.set_goal_status(goal["id"], "blocked")

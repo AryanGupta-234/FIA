@@ -374,6 +374,22 @@ class AgentRuntime:
             for action in actions
         ]
 
+    def _safe_execution_audit(self, value: Any) -> Any:
+        if isinstance(value, list):
+            return [self._safe_execution_audit(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        safe = {
+            key: self._safe_execution_audit(item)
+            for key, item in value.items()
+            if key != "output"
+        }
+        action_name = str(value.get("action") or "")
+        output = value.get("output")
+        if isinstance(output, dict):
+            safe["output"] = self.executor.audit_output(action_name, output)
+        return safe
+
     def _record_decision(
         self, *, utterance: str, status: str, intent_class: str | None,
         action: str | None, confidence: float, risk: str | None, reason: str,
@@ -846,7 +862,7 @@ class AgentRuntime:
                     "recovery": recovery_payload,
                 }
             self.store.audit("compound_partial_recovery_finished", {
-                "goal": original, "result": result,
+                "goal": original, "result": self._safe_execution_audit(result),
             })
         outcome = "success" if result["status"] == "completed" else "failure"
         self.store.episode(

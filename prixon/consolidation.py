@@ -60,6 +60,17 @@ class MacroPromoter:
     def consolidate(self) -> dict[str, Any]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for episode in self.store.successful_episodes():
+            actions = [
+                self.registry.get(step.get("tool", ""))
+                for step in episode["plan"].get("steps", [])
+            ]
+            if any(
+                action is None
+                or action.sensitive_output
+                or action.risk.value == "always_confirm"
+                for action in actions
+            ):
+                continue
             shape = self._shape(episode["plan"])
             encoded = json.dumps(shape, sort_keys=True, separators=(",", ":"))
             digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20]

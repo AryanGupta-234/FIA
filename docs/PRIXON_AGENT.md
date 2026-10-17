@@ -63,7 +63,7 @@ This benchmark calls the preview/decision path only; it does not execute Windows
 - L4 actions never execute autonomously.
 - Observed window/page/file text cannot teach aliases or elevate autonomy.
 - No browser credentials, cookies or password fields are collected.
-- Clipboard text is fetched only for a direct owner request after L4 confirmation; it is returned to the requester but never written to audit, episode or persistent goal records.
+- Clipboard text is fetched only for a direct owner request after L4 confirmation; it is returned to the requester but never written to audit, episode or persistent goal records. Sensitive clipboard actions are blocked from background goals and macro promotion.
 - Vision/OCR and app-specific adapters remain future automation tiers.
 
 ## Optional local voice kill
