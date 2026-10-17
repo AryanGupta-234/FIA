@@ -142,6 +142,32 @@ def default_actions() -> list[ActionSpec]:
             automation_tiers=("native_api",),
         ),
         ActionSpec(
+            name="ui.activate_control",
+            description="Invoke one explicitly named, visible button/menu/tab control in the foreground application using UI Automation.",
+            examples=(
+                "click the save button", "activate the open button",
+                "click the settings menu", "select the home tab",
+                "press the refresh button", "click the submit button",
+                "activate the selected menu item",
+            ),
+            hard_negatives=(
+                "open the application", "launch the program",
+                "read the page", "type into the form", "enter my password",
+            ),
+            intent_class=IntentClass.CONTROL, verb_type="activate", target_type="window",
+            required_slots=("hwnd", "control_name"),
+            parameter_schema={
+                "hwnd": "integer",
+                "control_name": "string",
+                "automation_id": "optional:string",
+                "control_type": "optional:string",
+            },
+            preconditions=("owner_confirmed", "window_exists", "control_exists"),
+            postconditions=("registered_control_invoked",),
+            risk=RiskTier.ALWAYS_CONFIRM,
+            automation_tiers=("ui_automation",),
+        ),
+        ActionSpec(
             name="window.minimize", description="Minimize the grounded foreground window.",
             examples=("minimize this window", "minimize current window", "minimize it",
                       "put this window away", "send the current window to the taskbar",
