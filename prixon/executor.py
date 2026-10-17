@@ -138,7 +138,7 @@ class WindowsActionAdapters:
                 "interfaces": list(psutil.net_if_addrs().keys()),
                 "bytes_sent": int(counters.bytes_sent),
                 "bytes_received": int(counters.bytes_recv),
-                "connections": len(psutil.net_connections(kind="inet")),
+                "connections": self._connection_count(),
             }
         if action == "app.launch":
             self._require_windows()
@@ -257,6 +257,13 @@ class WindowsActionAdapters:
             shutil.move(str(source), str(destination))
             return {"original_path": str(source), "quarantined_path": str(destination)}
         raise ValueError(f"No executor adapter registered for {action!r}.")
+
+    @staticmethod
+    def _connection_count() -> int | None:
+        try:
+            return len(psutil.net_connections(kind="inet"))
+        except (psutil.AccessDenied, OSError):
+            return None
 
     @staticmethod
     def _validate_launch_target(target: str) -> None:
@@ -490,6 +497,15 @@ class ActionExecutor:
             return {
                 "status": "rejected", "reason": "plan_validation_failed",
                 "errors": validation.errors, "steps": [],
+            }
+        if any(
+            self.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM
+            for step in plan.steps
+        ) and not confirmed:
+            return {
+                "status": "confirmation_required",
+                "reason": "whole_plan_contains_l4_action",
+                "steps": [],
             }
         results: list[dict[str, Any]] = []
         for index, step in enumerate(plan.steps):
