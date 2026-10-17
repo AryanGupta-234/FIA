@@ -60,8 +60,9 @@ class WindowsActionAdapters:
             hwnd = self._window_handle(args)
             if hwnd and os.name == "nt":
                 import ctypes
+                from ctypes import wintypes
                 user32 = ctypes.windll.user32
-                rect = ctypes.wintypes.RECT()
+                rect = wintypes.RECT()
                 user32.GetWindowRect(hwnd, ctypes.byref(rect))
                 return {"hwnd": hwnd, "iconic": bool(user32.IsIconic(hwnd)),
                         "zoomed": bool(user32.IsZoomed(hwnd)),
@@ -382,7 +383,13 @@ class ActionExecutor:
         if action_name == "app.is_running":
             return "running" in output
         if action_name == "app.launch":
-            return bool(output.get("launched")) and Path(output["launched"]).exists()
+            pid = output.get("pid")
+            return bool(
+                output.get("launched")
+                and Path(output["launched"]).exists()
+                and pid is not None
+                and psutil.pid_exists(int(pid))
+            )
         if action_name == "window.minimize":
             return bool(output.get("iconic"))
         if action_name == "window.maximize":
