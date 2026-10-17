@@ -9,6 +9,10 @@ class PrixonSettings(BaseSettings):
     agent_max_plan_steps: int = 8
     agent_wall_clock_seconds: float = 60.0
     agent_step_timeout_seconds: float = 12.0
+    agent_wall_clock_seconds: float = 60.0
+    agent_max_replans: int = 2
+    agent_max_model_tokens: int = 1024
+    agent_max_actions_per_minute: int = 20
     agent_loop_poll_seconds: float = 2.0
     semantic_enabled: bool = False
     agent_autostart: bool = True
