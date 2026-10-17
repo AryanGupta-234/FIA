@@ -33,6 +33,7 @@ class OllamaClient:
         self.model = model
         self.timeout_seconds = max(1.0, timeout_seconds)
         self.keep_alive = keep_alive
+        self.max_prompt_chars = 6000
         self.last_metrics: dict[str, Any] = {}
 
     async def health(self) -> dict[str, Any]:
@@ -71,6 +72,8 @@ class OllamaClient:
         self, system: str, prompt: str, schema: dict[str, Any],
         *, max_tokens: int = 384, temperature: float = 0.0,
     ) -> dict[str, Any]:
+        system = system[:self.max_prompt_chars]
+        prompt = prompt[:self.max_prompt_chars]
         payload = {
             "model": self.model,
             "stream": False,
@@ -105,6 +108,7 @@ class OllamaClient:
             "response_bytes": len(raw.encode("utf-8")),
             "latency_ms": duration_ms,
             "total_duration_ns": data.get("total_duration"),
+            "load_duration_ns": data.get("load_duration"),
             "prompt_eval_count": data.get("prompt_eval_count"),
             "eval_count": data.get("eval_count"),
             "keep_alive": self.keep_alive,
