@@ -118,6 +118,8 @@ class AgentStore:
                     args_json TEXT NOT NULL,
                     before_state_json TEXT NOT NULL,
                     output_json TEXT NOT NULL DEFAULT '{}',
+                    utterance TEXT NOT NULL DEFAULT '',
+                    session_id TEXT NOT NULL DEFAULT 'local-session',
                     status TEXT NOT NULL DEFAULT 'pending',
                     created_at REAL NOT NULL,
                     completed_at REAL
@@ -150,6 +152,10 @@ class AgentStore:
             }
             if "output_json" not in undo_columns:
                 db.execute("ALTER TABLE undo_journal ADD COLUMN output_json TEXT NOT NULL DEFAULT '{}'")
+            if "utterance" not in undo_columns:
+                db.execute("ALTER TABLE undo_journal ADD COLUMN utterance TEXT NOT NULL DEFAULT ''")
+            if "session_id" not in undo_columns:
+                db.execute("ALTER TABLE undo_journal ADD COLUMN session_id TEXT NOT NULL DEFAULT 'local-session'")
 
     def audit(self, event_type: str, payload: dict[str, Any]) -> None:
         with self.connect() as db:
@@ -236,14 +242,18 @@ class AgentStore:
             )
             return cursor.rowcount == 1
 
-    def record_undo(self, action_name: str, args: dict[str, Any], before_state: dict[str, Any]) -> str:
+    def record_undo(
+        self, action_name: str, args: dict[str, Any], before_state: dict[str, Any],
+        *, utterance: str = "", session_id: str = "local-session",
+    ) -> str:
         undo_id = str(uuid.uuid4())
         with self.connect() as db:
             db.execute(
-                """INSERT INTO undo_journal(id,action_name,args_json,before_state_json,status,created_at)
-                   VALUES(?,?,?,?, 'pending', ?)""",
+                """INSERT INTO undo_journal(
+                       id,action_name,args_json,before_state_json,utterance,session_id,status,created_at
+                   ) VALUES(?,?,?,?,?,?,'pending',?)""",
                 (undo_id, action_name, json.dumps(args, default=str),
-                 json.dumps(before_state, default=str), time.time()),
+                 json.dumps(before_state, default=str), utterance, session_id, time.time()),
             )
         return undo_id
 
@@ -491,6 +501,8 @@ class AgentStore:
                 "args": json.loads(row["args_json"]),
                 "before_state": json.loads(row["before_state_json"]),
                 "output": json.loads(row["output_json"]) if "output_json" in row.keys() else {},
+                "utterance": row["utterance"] if "utterance" in row.keys() else "",
+                "session_id": row["session_id"] if "session_id" in row.keys() else "local-session",
                 "status": row["status"],
             }
 
