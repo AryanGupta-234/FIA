@@ -14,11 +14,11 @@ class DecisionSignals:
 
 
 DEFAULT_WEIGHTS = {
-    "retrieval_margin": 0.30,
-    "slot_grounding": 0.25,
-    "llm_confidence": 0.10,
+    "retrieval_margin": 0.45,
+    "slot_grounding": 0.30,
+    "llm_confidence": 0.05,
     "context_prior": 0.10,
-    "user_lexicon_hit": 0.25,
+    "user_lexicon_hit": 0.10,
 }
 RISK_THRESHOLDS = {
     "read_only": 0.55,
