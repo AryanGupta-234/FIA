@@ -25,6 +25,11 @@ def validate_plan(
         for slot in action.required_slots:
             if slot not in step.args or step.args[slot] in (None, ""):
                 errors.append(f"required_slot_missing:{index}:{slot}")
+        if any(
+            isinstance(value, str) and value.startswith("$previous.")
+            for value in step.args.values()
+        ) and (index == 0 or index - 1 not in step.depends_on):
+            errors.append(f"previous_reference_without_dependency:{index}")
         if not step.expected_outcome.strip():
             errors.append(f"expected_outcome_missing:{index}")
         prohibited = {"command", "shell", "script", "powershell", "cmdline"}
