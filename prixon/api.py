@@ -358,6 +358,12 @@ def voice_status() -> dict[str, Any]:
     return agent_loop.voice_kill.status()
 
 
+@router.get("/voice/commands")
+def voice_commands(limit: int = Query(10, ge=1, le=50)) -> list[dict[str, Any]]:
+    """In-memory outcomes from push-to-talk commands; recognized transcripts are not returned."""
+    return agent_loop.voice_results(limit)
+
+
 @router.get("/suggestions")
 def list_suggestions(limit: int = Query(30, ge=1, le=100)) -> list[dict[str, Any]]:
     return agent_loop.suggestions()[-limit:]
