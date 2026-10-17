@@ -71,6 +71,7 @@ class PlanStep(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
     depends_on: list[int] = Field(default_factory=list)
     expected_outcome: str
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class AgentPlan(BaseModel):
