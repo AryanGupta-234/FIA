@@ -437,3 +437,34 @@ def test_executor_does_not_continue_fallback_after_timeout(tmp_path):
         assert "timeout" in result.error
     finally:
         executor.shutdown()
+
+
+def test_routine_store_claims_due_once_per_local_day(tmp_path):
+    from datetime import datetime
+
+    store = AgentStore(tmp_path / "routine.sqlite3")
+    routine_id = store.create_routine(
+        "Morning focus", 7, "08:30", weekdays=[0, 1, 2, 3, 4],
+    )
+    due = datetime(2026, 10, 19, 9, 0).astimezone()
+    assert any(item["id"] == routine_id for item in store.due_routines(due))
+    assert store.due_routines(due) == []
+
+
+def test_routine_store_does_not_fire_on_unscheduled_weekday(tmp_path):
+    from datetime import datetime
+
+    store = AgentStore(tmp_path / "routine-days.sqlite3")
+    routine_id = store.create_routine("Weekday only", 8, "08:00", weekdays=[0, 1, 2, 3, 4])
+    saturday = datetime(2026, 10, 17, 9, 0).astimezone()
+    assert routine_id not in [item["id"] for item in store.due_routines(saturday)]
+
+
+def test_wmi_process_stop_classifier_marks_nonzero_exit_as_crash():
+    from prixon.events import WinProcessTerminationObserver
+
+    event_type, payload = WinProcessTerminationObserver.classify_stop("app.exe", 42, 1)
+    assert event_type == "process_crashed"
+    assert payload["unexpected"] is True
+    normal_type, _ = WinProcessTerminationObserver.classify_stop("app.exe", 42, 0)
+    assert normal_type == "process_stopped"
