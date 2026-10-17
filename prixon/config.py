@@ -11,4 +11,5 @@ class PrixonSettings(BaseSettings):
     agent_step_timeout_seconds: float = 12.0
     agent_loop_poll_seconds: float = 2.0
     semantic_enabled: bool = False
+    agent_autostart: bool = True
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_prefix="PRIXON_")
