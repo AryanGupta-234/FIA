@@ -228,15 +228,22 @@ class AgentRuntime:
             [{"name": item["name"], "target": str(item["pid"]), **item}
              for item in processes if item.get("name")],
         )
-        foreground = self.perception.snapshot().get("foreground_window")
-        window_count = 0
+        snapshot = self.perception.snapshot()
+        foreground = snapshot.get("foreground_window")
+        open_windows = snapshot.get("open_windows") or []
         if foreground and foreground.get("sensitive"):
             self.references.clear()
+        safe_windows = [
+            {
+                "name": item.get("title") or item.get("process") or f"Window {item['handle']}",
+                "target": str(item["handle"]),
+                **item,
+            }
+            for item in open_windows
+            if item.get("handle") and not item.get("sensitive")
+        ]
+        window_count = self.index.refresh("window", safe_windows)
         if foreground and foreground.get("title") and not foreground.get("sensitive"):
-            window_count = self.index.refresh("window", [{
-                "name": foreground["title"], "target": str(foreground["handle"]),
-                **foreground,
-            }])
             self.references.remember({
                 "kind": "window", "name": foreground["title"],
                 "target": str(foreground["handle"]), "hwnd": foreground["handle"],
@@ -253,9 +260,21 @@ class AgentRuntime:
         foreground = snapshot.get("foreground_window")
         if foreground and foreground.get("sensitive"):
             foreground = None
+        windows = [
+            {
+                "handle": item.get("handle"),
+                "pid": item.get("pid"),
+                "process": item.get("process"),
+                "title": item.get("title"),
+                "minimized": item.get("minimized"),
+                "foreground": item.get("foreground"),
+            }
+            for item in (snapshot.get("open_windows") or [])
+            if not item.get("sensitive")
+        ][:30]
         return {
             "foreground_app": foreground,
-            "open_windows": [foreground] if foreground else [],
+            "open_windows": windows,
             "system": {
                 "cpu_percent": snapshot["cpu_percent"],
                 "memory_percent": snapshot["memory"]["percent"],
