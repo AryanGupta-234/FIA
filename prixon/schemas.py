@@ -31,9 +31,12 @@ class ActionSpec(BaseModel):
     verb_type: str
     target_type: str
     required_slots: tuple[str, ...] = ()
-    risk: RiskTier = RiskTier.READ_ONLY
+    parameter_schema: dict[str, str] = Field(default_factory=dict)
+    preconditions: tuple[str, ...] = ()
     postconditions: tuple[str, ...] = ()
+    risk: RiskTier = RiskTier.READ_ONLY
     undo_supported: bool = False
+    automation_tiers: tuple[str, ...] = ("native_api",)
 
 
 class Candidate(BaseModel):
@@ -52,6 +55,14 @@ class RouteResult(BaseModel):
     reason: str
     requires_confirmation: bool = False
     clarification: str | None = None
+    slots: dict[str, Any] = Field(default_factory=dict)
+
+
+class ThoughtRecord(BaseModel):
+    observation: str
+    hypothesis: str
+    next_action: str
+    expected_outcome: str
 
 
 class PlanStep(BaseModel):
@@ -64,6 +75,7 @@ class PlanStep(BaseModel):
 class AgentPlan(BaseModel):
     goal: str
     steps: list[PlanStep] = Field(min_length=1, max_length=8)
+    thought: ThoughtRecord | None = None
 
 
 class PlanValidation(BaseModel):
@@ -75,7 +87,37 @@ class DecisionRequest(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
 
 
+class RunRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    args: dict[str, Any] = Field(default_factory=dict)
+    execute: bool = False
+    confirmed: bool = False
+    session_id: str = "local-session"
+
+
 class TeachAliasRequest(BaseModel):
     phrase: str = Field(min_length=2, max_length=100)
     action_name: str = Field(min_length=2, max_length=100)
     confirmed: bool = False
+
+
+class GoalCreateRequest(BaseModel):
+    description: str = Field(min_length=1, max_length=500)
+    priority: int = Field(default=50, ge=0, le=100)
+    plan: AgentPlan | None = None
+
+
+class GoalStatusRequest(BaseModel):
+    status: str
+
+
+class AliasFeedbackRequest(BaseModel):
+    phrase: str = Field(min_length=2, max_length=100)
+    action_name: str = Field(min_length=2, max_length=100)
+    success: bool
+    session_id: str = "local-session"
+
+
+class ProactiveFeedbackRequest(BaseModel):
+    trigger: str
+    accepted: bool
