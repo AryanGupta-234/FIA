@@ -67,14 +67,17 @@ FIA cannot crawl the entire internet exhaustively. Coverage depends on the confi
 See docs/ARCHITECTURE.md, docs/SECURITY.md and docs/ROADMAP.md.
 
 
-## Prixon autonomous Windows agent (parallel subsystem)
+## Prixon — autonomous Windows agent
 
-This repository also contains the **Prixon** local-first Windows agent foundation. It is developed and tested separately from FIA's fashion research workflow.
+Prixon is a separate local-first Windows 11 agent subsystem. It does not change FIA's fashion research workflow.
 
-- Agent API: `/api/v1/agent/health`, `/actions`, `/decide`, `/aliases`, `/governance/check`.
-- Deterministic rules-first intent routing and allowlisted action contracts.
-- Local-only Ollama adapter (no hosted model fallback).
-- Validated plans and L0-L4 autonomy/risk gate.
-- **Execution is disabled in this foundation slice.** No model-generated shell command can execute.
+Implemented on the feature/prixon-agent-foundation branch:
+- L0–L5 intent pipeline foundations: deterministic fast paths, class-aware hard negatives, optional local BGE retrieval, entity grounding, confidence fusion and shortlist-only Ollama arbitration.
+- Windows perception for foreground windows, process inventory, installed Start Menu applications, CPU/RAM/battery/network telemetry and WinEvent/file-system observation.
+- Bounded plans, allowlisted Win32/Settings URI adapters, postcondition checks, undo journal and a global Ctrl+Alt+Pause kill switch.
+- Persistent goals, event/audit stores, suggestion cooldowns, owner aliases/corrections, delayed implicit learning and owner-approved macro proposals.
+- API routes under /api/v1/agent; local Ollama only, no hosted fallback.
 
-See [Prixon implementation notes](docs/PRIXON_AGENT.md).
+Execution is available only through explicit API requests or explicit goals. Background proactive behavior is suggestion-only. L4 actions always require confirmation. Semantic retrieval is optional and disabled by default until installed and enabled.
+
+See docs/PRIXON_AGENT.md for setup, API endpoints, safeguards, phase status and current limitations.
