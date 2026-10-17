@@ -27,6 +27,11 @@ def classify(text: str) -> IntentClass:
         value,
     ):
         return IntentClass.SYSTEM_SETTING
+    if re.search(
+        r"^(?:is|check if|whether)\\s+([\\w.-]+(?:\\s+[\\w.-]+){0,3})\\s+(?:is\\s+)?(?:running|open|active)\\b",
+        value,
+    ):
+        return IntentClass.QUERY
     if any(term in value for term in (
         "wifi", "wi-fi", "wireless", "battery", "volume", "master audio",
         "ram", "memory", "cpu", "processor", "network", "internet",
@@ -44,13 +49,14 @@ def classify(text: str) -> IntentClass:
     if re.search(r"\b(open|launch|start|fire up)\b", value):
         return IntentClass.LAUNCH
     if any(term in value for term in (
-        "minimize", "maximize", "restore", "unminimize", "close window", "close this window",
-        "close current window", "close current app", "close it",
+        "minimize", "maximize", "make this window full size", "restore", "unminimize",
+        "close window", "close this window", "close current window", "close current app", "close it",
     )) or re.match(r"^close\s+", value):
         return IntentClass.CONTROL
     if any(term in value for term in (
-        "list ", "show ", "what ", "how ", "is ", "check ", "tell me ",
-        "whether ", "do i have ", "remaining charge", "battery percentage",
+        "list ", "display ", "show ", "what ", "how ", "is ", "check ",
+        "tell me ", "give me ", "whether ", "do i have ",
+        "remaining charge", "battery percentage",
     )) or " running" in value or " active" in value:
         return IntentClass.QUERY
     return IntentClass.CHAT
@@ -134,7 +140,7 @@ class IntentRouter:
             return 0.0
         if text == target:
             return 1.0
-        if target in text:
+        if re.search(r"(?<!\\w)" + re.escape(target) + r"(?!\\w)", text):
             return 0.92
         tokens = set(target.split())
         words = set(text.split())
@@ -157,7 +163,10 @@ class IntentRouter:
         if "level" in slots:
             return bool(re.search(r"\b\d{1,3}\s*%?\b", text))
         if "window" in slots:
-            return any(word in text for word in ("this window", "current window", "foreground", " it", "that"))
+            return any(word in text for word in (
+                "this window", "current window", "this app", "current app",
+                "foreground", " it", "that",
+            ))
         if "setting" in slots:
             return any(term in text for term in (
                 "display", "screen", "sound", "audio", "wifi", "wi-fi",
