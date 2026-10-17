@@ -226,3 +226,17 @@ def test_intent_router_distinguishes_process_list_from_app_running():
 def test_intent_router_asks_for_missing_launch_entity():
     result = IntentRouter().route("open")
     assert result.status in {"clarify", "unresolved"}
+
+
+def test_negative_memory_penalizes_previously_corrected_intent(store):
+    store.add_negative_example("is spotify running", "app.is_running", penalty_delta=0.75)
+    result = IntentRouter(ActionRegistry(), store).route("is spotify running")
+    assert result.selected_action != "app.is_running"
+
+
+def test_explicit_correction_creates_positive_alias_and_negative_example(store):
+    lexicon = OwnerLexicon(store)
+    corrected = lexicon.correct("check spotify", "process.list", "app.is_running")
+    assert corrected.status == "corrected"
+    assert store.alias("check spotify")["target"] == "app.is_running"
+    assert store.negative_examples()[0]["action_name"] == "process.list"
