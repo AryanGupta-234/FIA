@@ -69,9 +69,12 @@ def test_owner_synonym_promotes_after_confident_multi_session_evidence(store):
             "fire up", "app.launch", success=True, session_id=session,
             risk=RiskTier.REVERSIBLE,
         )
-    assert result.status == "promoted"
+    assert result.status == "promotion_ready"
     assert result.confidence >= 0.85
     assert result.sessions == 3
+    assert lexicon.lookup("fire up") is None
+    approved = lexicon.approve_candidate("fire up", "app.launch", RiskTier.REVERSIBLE)
+    assert approved.status == "promoted"
     assert lexicon.lookup("fire up")["target"] == "app.launch"
 
 
