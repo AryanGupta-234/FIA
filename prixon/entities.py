@@ -18,6 +18,14 @@ class EntityIndex:
         self.embedder = embedder
         self._vectors: dict[tuple[str, str, str], list[float]] = {}
 
+    def remove_target(self, kind: str, target: str) -> int:
+        removed = self.store.remove_entity(kind, target)
+        self._vectors = {
+            key: vector for key, vector in self._vectors.items()
+            if not (key[0] == kind and key[2] == target)
+        }
+        return removed
+
     def refresh(self, kind: str, entities: list[dict[str, Any]], source: str = "perception") -> int:
         count = 0
         missing_vectors: list[tuple[tuple[str, str, str], str]] = []
@@ -166,6 +174,12 @@ class ReferenceResolver:
         if value in {"it", "that", "this", "that one", "the other one", "same one"}:
             return dict(self._entity) if self._entity else None
         return None
+
+    def forget(self, target: str) -> bool:
+        if not self._entity or str(self._entity.get("target")) != str(target):
+            return False
+        self.clear()
+        return True
 
     def clear(self) -> None:
         self._entity = None
