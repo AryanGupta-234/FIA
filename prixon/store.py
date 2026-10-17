@@ -62,6 +62,14 @@ class AgentStore:
                     last_updated REAL NOT NULL,
                     PRIMARY KEY(phrase, target)
                 );
+                CREATE TABLE IF NOT EXISTS negative_examples (
+                    phrase TEXT NOT NULL,
+                    action_name TEXT NOT NULL,
+                    penalty REAL NOT NULL DEFAULT 0.2,
+                    corrections INTEGER NOT NULL DEFAULT 1,
+                    last_updated REAL NOT NULL,
+                    PRIMARY KEY(phrase, action_name)
+                );
                 CREATE TABLE IF NOT EXISTS episodes (
                     id TEXT PRIMARY KEY,
                     utterance TEXT NOT NULL,
@@ -474,6 +482,34 @@ class AgentStore:
                 {"id": row["id"], "utterance": row["utterance"],
                  "plan": json.loads(row["plan_json"]),
                  "layer_path": json.loads(row["layer_path_json"])}
+                for row in rows
+            ]
+
+    def add_negative_example(
+        self, phrase: str, action_name: str, penalty_delta: float = 0.15,
+    ) -> None:
+        normalized = " ".join(phrase.casefold().split())
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT penalty,corrections FROM negative_examples WHERE phrase=? AND action_name=?",
+                (normalized, action_name),
+            ).fetchone()
+            penalty = min(0.75, (float(row["penalty"]) if row else 0.0) + penalty_delta)
+            corrections = (int(row["corrections"]) if row else 0) + 1
+            db.execute(
+                """INSERT INTO negative_examples(phrase,action_name,penalty,corrections,last_updated)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(phrase,action_name) DO UPDATE SET penalty=excluded.penalty,
+                   corrections=excluded.corrections,last_updated=excluded.last_updated""",
+                (normalized, action_name, penalty, corrections, time.time()),
+            )
+
+    def negative_examples(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM negative_examples ORDER BY last_updated DESC").fetchall()
+            return [
+                {"phrase": row["phrase"], "action_name": row["action_name"],
+                 "penalty": row["penalty"], "corrections": row["corrections"]}
                 for row in rows
             ]
 
