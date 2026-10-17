@@ -146,3 +146,12 @@ class MacroRunRequest(BaseModel):
 
 class UndoRequest(BaseModel):
     undo_id: str = Field(min_length=1, max_length=64)
+
+
+class DeleteAliasRequest(BaseModel):
+    phrase: str = Field(min_length=2, max_length=100)
+    target: str | None = Field(default=None, max_length=500)
+
+
+class ResetLearningRequest(BaseModel):
+    confirmed: bool = False
