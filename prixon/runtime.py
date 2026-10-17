@@ -411,6 +411,20 @@ class AgentRuntime:
     async def preview(
         self, text: str, *, trusted_args: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        async with self.ollama.request_budget(
+            self.settings.agent_max_model_tokens,
+        ) as budget:
+            result = await self._preview(text, trusted_args=trusted_args)
+            result["model_budget"] = {
+                "limit": budget["limit"],
+                "used": budget["used"],
+                "remaining": max(0, budget["limit"] - budget["used"]),
+            }
+            return result
+
+    async def _preview(
+        self, text: str, *, trusted_args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         self._register_approved_macros()
         self.refresh_entities(force=False)
         normalized = " ".join(text.casefold().split())
@@ -575,6 +589,23 @@ class AgentRuntime:
         return max(matches)[1] if matches else None
 
     async def run_request(
+        self, text: str, args: dict[str, Any] | None = None, *,
+        execute: bool | None = None, confirmed: bool = False, session_id: str = "local-session",
+    ) -> dict[str, Any]:
+        async with self.ollama.request_budget(
+            self.settings.agent_max_model_tokens,
+        ) as budget:
+            result = await self._run_request(
+                text, args, execute=execute, confirmed=confirmed, session_id=session_id,
+            )
+            result["model_budget"] = {
+                "limit": budget["limit"],
+                "used": budget["used"],
+                "remaining": max(0, budget["limit"] - budget["used"]),
+            }
+            return result
+
+    async def _run_request(
         self, text: str, args: dict[str, Any] | None = None, *,
         execute: bool | None = None, confirmed: bool = False, session_id: str = "local-session",
     ) -> dict[str, Any]:
