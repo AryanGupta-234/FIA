@@ -13,6 +13,7 @@ from typing import Any
 
 import psutil
 
+from prixon.app_adapters import WindowsMediaSessionAdapter
 from prixon.governance import decide
 from prixon.perception import WindowsPerception
 from prixon.registry import ActionRegistry
@@ -57,6 +58,7 @@ class WindowsActionAdapters:
 
     def __init__(self, perception: WindowsPerception) -> None:
         self.perception = perception
+        self.media = WindowsMediaSessionAdapter()
         self._uia_cache: dict[int, tuple[float, list[dict[str, str]]]] = {}
         self._uia_cache_lock = threading.Lock()
         self._uia_cache_ttl_seconds = 3.0
@@ -85,6 +87,8 @@ class WindowsActionAdapters:
             return {"previous_hwnd": foreground.get("handle") if foreground else None}
         if action == "volume.set":
             return {"volume": self._get_volume()}
+        if action.startswith("media.") and action != "media.status":
+            return self.media.snapshot(args)
         if action == "file.quarantine":
             return {"original_path": str(self._validated_user_file(args.get("file")))}
         return {}
@@ -150,6 +154,11 @@ class WindowsActionAdapters:
                     self._audio_endpoint()
                 except Exception as exc:
                     return f"audio_endpoint_unavailable:{type(exc).__name__}"
+            elif precondition == "media_session_available":
+                try:
+                    self.media.snapshot(args)
+                except Exception as exc:
+                    return f"media_session_unavailable:{type(exc).__name__}"
             elif precondition == "setting_uri_allowlisted":
                 setting = str(args.get("setting") or "").casefold().strip()
                 if setting not in self.SETTINGS_URIS:
@@ -166,6 +175,8 @@ class WindowsActionAdapters:
     def execute_tier(
         self, action: str, args: dict[str, Any], tier: str,
     ) -> dict[str, Any]:
+        if tier == "app_adapter":
+            return self.media.execute(action, args)
         if tier in {"native_api", "win32", "uri_scheme", "shell_uri"}:
             return self.execute(action, args)
         if tier == "ui_automation":
@@ -650,6 +661,8 @@ class WindowsActionAdapters:
                     0x0004 | 0x0010,
                 )
             return True
+        if action.startswith("media."):
+            return self.media.undo(action, args, before, output)
         if action == "settings.open":
             hwnd = int(output.get("hwnd") or 0)
             previous = int(before.get("previous_hwnd") or 0)
@@ -840,6 +853,16 @@ class ActionExecutor:
             return "formats" in output and "content_read" in output
         if action_name == "clipboard.read":
             return isinstance(output.get("text"), str) and output.get("text_available") is True
+        if action_name == "media.status":
+            return bool(output.get("session_available")) and "playback_status" in output
+        if action_name == "media.play":
+            return bool(output.get("accepted")) and output.get("playback_status") == "playing"
+        if action_name == "media.pause":
+            return bool(output.get("accepted")) and output.get("playback_status") == "paused"
+        if action_name == "media.stop":
+            return bool(output.get("accepted")) and output.get("playback_status") == "stopped"
+        if action_name in {"media.skip_next", "media.skip_previous"}:
+            return bool(output.get("accepted"))
         if action_name == "app.is_running":
             return "running" in output
         if action_name == "app.launch":
