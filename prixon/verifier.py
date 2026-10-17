@@ -83,6 +83,14 @@ def compare_expected(
                 and observed.get("content_read") is False
                 and observed.get("names_or_paths_read") is False
             )
+        elif "browser_debug_metadata_returned" in key:
+            matched += int(
+                observed.get("reachable") is True
+                and observed.get("metadata_only") is True
+                and observed.get("urls_read") is False
+                and observed.get("titles_read") is False
+                and observed.get("page_content_read") is False
+            )
         elif "media_status_returned" in key:
             matched += int(
                 observed.get("session_available") is True

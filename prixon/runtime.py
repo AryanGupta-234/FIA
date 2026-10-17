@@ -1236,6 +1236,18 @@ class AgentRuntime:
 
     @staticmethod
     def format_observation(action_name: str, output: dict[str, Any]) -> str:
+        if action_name == "browser.debug_status":
+            product = str(output.get("browser_product") or "Chromium")
+            target_count = int(output.get("target_count", 0))
+            types = ", ".join(
+                f"{kind}: {count}"
+                for kind, count in sorted((output.get("target_type_counts") or {}).items())
+            ) or "none"
+            return (
+                f"{product} debugging endpoint is reachable on localhost. "
+                f"{target_count} browser target(s) are active ({types}). "
+                "URLs, titles and page contents were not read."
+            )
         if action_name == "office.status":
             total = int(output.get("open_document_count", 0))
             unsaved = int(output.get("unsaved_document_count", 0))

@@ -304,6 +304,26 @@ def default_actions() -> list[ActionSpec]:
             risk=RiskTier.READ_ONLY, automation_tiers=("app_adapter",),
         ),
         ActionSpec(
+            name="browser.debug_status",
+            description="Inspect local Chromium debugging runtime/version and target type counts without reading URLs, titles or page contents.",
+            examples=(
+                "check browser debugging status",
+                "check the local chromium debug endpoint",
+                "show browser runtime metadata",
+                "is brave remote debugging available",
+                "count active browser target types",
+                "check browser developer protocol status",
+            ),
+            hard_negatives=(
+                "show browser history", "read active page", "list open websites",
+                "show page titles", "read cookies",
+            ),
+            intent_class=IntentClass.QUERY, verb_type="inspect", target_type="browser_runtime",
+            preconditions=("browser_debug_enabled",),
+            postconditions=("browser_debug_metadata_returned",),
+            risk=RiskTier.READ_ONLY, automation_tiers=("app_adapter",),
+        ),
+        ActionSpec(
             name="settings.open", description="Open an allowlisted Windows Settings page.",
             examples=("open display settings", "open sound settings", "open bluetooth settings",
                       "open wifi settings", "open battery settings", "open night light settings",

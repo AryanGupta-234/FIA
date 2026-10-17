@@ -28,6 +28,11 @@ def classify(text: str) -> IntentClass:
         value,
     ):
         return IntentClass.SYSTEM_SETTING
+    if any(term in value for term in (
+        "browser debugging", "chromium debug", "remote debugging",
+        "browser runtime metadata", "browser target types",
+    )):
+        return IntentClass.QUERY
     if "clipboard" in value or "copied text" in value or "what did i copy" in value:
         return IntentClass.QUERY
     if re.search(
