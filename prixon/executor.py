@@ -328,7 +328,6 @@ class WindowsActionAdapters:
             else:
                 user32.ShowWindow(hwnd, 9)
             if before.get("rect") and not before.get("zoomed") and not before.get("iconic"):
-                from ctypes import wintypes
                 left, top, right, bottom = before["rect"]
                 user32.SetWindowPos(
                     hwnd, 0, left, top, right - left, bottom - top,
