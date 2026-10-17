@@ -13,7 +13,7 @@ from typing import Any
 
 import psutil
 
-from prixon.app_adapters import WindowsMediaSessionAdapter
+from prixon.app_adapters import WindowsMediaSessionAdapter, WindowsOfficeAdapter
 from prixon.governance import decide
 from prixon.perception import WindowsPerception
 from prixon.registry import ActionRegistry
@@ -59,6 +59,7 @@ class WindowsActionAdapters:
     def __init__(self, perception: WindowsPerception) -> None:
         self.perception = perception
         self.media = WindowsMediaSessionAdapter()
+        self.office = WindowsOfficeAdapter()
         self._uia_cache: dict[int, tuple[float, list[dict[str, str]]]] = {}
         self._uia_cache_lock = threading.Lock()
         self._uia_cache_ttl_seconds = 3.0
@@ -159,6 +160,14 @@ class WindowsActionAdapters:
                     self.media.snapshot(args)
                 except Exception as exc:
                     return f"media_session_unavailable:{type(exc).__name__}"
+            elif precondition == "office_automation_available":
+                if os.name != "nt":
+                    return "windows_only"
+                try:
+                    import pythoncom  # noqa: F401
+                    import win32com.client  # noqa: F401
+                except ImportError:
+                    return "office_automation_dependency_missing"
             elif precondition == "setting_uri_allowlisted":
                 setting = str(args.get("setting") or "").casefold().strip()
                 if setting not in self.SETTINGS_URIS:
@@ -176,7 +185,11 @@ class WindowsActionAdapters:
         self, action: str, args: dict[str, Any], tier: str,
     ) -> dict[str, Any]:
         if tier == "app_adapter":
-            return self.media.execute(action, args)
+            if action.startswith("media."):
+                return self.media.execute(action, args)
+            if action.startswith("office."):
+                return self.office.execute(action, args)
+            raise ValueError(f"No tier-2 adapter is registered for {action}.")
         if tier in {"native_api", "win32", "uri_scheme", "shell_uri"}:
             return self.execute(action, args)
         if tier == "ui_automation":
@@ -855,6 +868,12 @@ class ActionExecutor:
             return isinstance(output.get("text"), str) and output.get("text_available") is True
         if action_name == "media.status":
             return bool(output.get("session_available")) and "playback_status" in output
+        if action_name == "office.status":
+            return (
+                output.get("automation_available") is True
+                and "open_document_count" in output
+                and "unsaved_document_count" in output
+            )
         if action_name == "media.play":
             return bool(output.get("accepted")) and output.get("playback_status") == "playing"
         if action_name == "media.pause":
