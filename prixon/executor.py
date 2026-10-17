@@ -92,6 +92,67 @@ class WindowsActionAdapters:
         if os.name != "nt":
             raise OSError("This Prixon action is available only on Windows 11.")
 
+    def check_preconditions(
+        self,
+        action_name: str,
+        preconditions: tuple[str, ...],
+        args: dict[str, Any],
+        *,
+        confirmed: bool,
+        utterance: str,
+    ) -> str | None:
+        """Evaluate the allowlisted predicate vocabulary on fresh machine state."""
+        for precondition in preconditions:
+            if precondition == "owner_confirmed":
+                if not confirmed:
+                    return "owner_confirmation_required"
+            elif precondition == "owner_explicitly_requested_clipboard_text":
+                explicit_terms = (
+                    "clipboard", "pasteboard", "what did i copy", "what i copied",
+                )
+                if action_name != "clipboard.read" or not any(
+                    term in utterance.casefold() for term in explicit_terms
+                ):
+                    return "clipboard_text_requires_an_explicit_owner_request"
+            elif precondition == "installed_application_resolves":
+                try:
+                    target = str(args.get("application_target") or "")
+                    self._validate_launch_target(target)
+                except (OSError, ValueError) as exc:
+                    return f"installed_application_not_available:{type(exc).__name__}"
+            elif precondition == "window_exists":
+                if os.name != "nt":
+                    return "windows_only"
+                hwnd = self._window_handle(args)
+                if not hwnd:
+                    return "grounded_window_handle_missing"
+                import ctypes
+                user32 = ctypes.windll.user32
+                if not user32.IsWindow(hwnd):
+                    return "target_window_no_longer_exists"
+                length = user32.GetWindowTextLengthW(hwnd)
+                buffer = ctypes.create_unicode_buffer(min(length + 1, 256))
+                user32.GetWindowTextW(hwnd, buffer, len(buffer))
+                if WindowsPerception._is_sensitive_title(buffer.value):
+                    return "sensitive_window_target_blocked"
+            elif precondition == "audio_endpoint_available":
+                try:
+                    self._audio_endpoint()
+                except Exception as exc:
+                    return f"audio_endpoint_unavailable:{type(exc).__name__}"
+            elif precondition == "setting_uri_allowlisted":
+                setting = str(args.get("setting") or "").casefold().strip()
+                if setting not in self.SETTINGS_URIS:
+                    return "setting_uri_not_allowlisted"
+            elif precondition == "file_exists_in_user_profile":
+                try:
+                    self._validated_user_file(args.get("file"))
+                except (OSError, ValueError) as exc:
+                    return f"user_file_not_available:{type(exc).__name__}"
+            else:
+                return f"unsupported_precondition:{precondition}"
+        return None
+
     def execute_tier(
         self, action: str, args: dict[str, Any], tier: str,
     ) -> dict[str, Any]:
@@ -567,6 +628,15 @@ class ActionExecutor:
             confidence, action.risk.value,
         ):
             return ActionResult(False, action_name, error="confidence_below_risk_threshold")
+        precondition_error = self.adapters.check_preconditions(
+            action_name, action.preconditions, args,
+            confirmed=confirmed, utterance=utterance,
+        )
+        if precondition_error:
+            self.store.audit("action_precondition_failed", {
+                "action": action_name, "precondition_error": precondition_error,
+            })
+            return ActionResult(False, action_name, error=f"precondition_failed:{precondition_error}")
         if action.risk != RiskTier.READ_ONLY and not action.undo_supported and action.risk != RiskTier.ALWAYS_CONFIRM:
             return ActionResult(False, action_name, error="state_change_without_undo_recipe_blocked")
 
