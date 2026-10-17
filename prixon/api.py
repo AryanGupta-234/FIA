@@ -13,6 +13,7 @@ from prixon.runtime import AgentRuntime
 from prixon.schemas import (
     AgentPlan,
     AliasFeedbackRequest,
+    DeleteAliasRequest,
     DecisionRequest,
     EntityAliasRequest,
     GoalCreateRequest,
@@ -21,6 +22,7 @@ from prixon.schemas import (
     MacroRunRequest,
     ProactiveFeedbackRequest,
     RunRequest,
+    ResetLearningRequest,
     TeachAliasRequest,
 )
 from prixon.store import AgentStore
@@ -140,6 +142,25 @@ def record_owner_feedback(payload: AliasFeedbackRequest) -> dict[str, Any]:
         "confidence": result.confidence,
         "independent_sessions": result.sessions,
     }
+
+
+@router.delete("/learning/aliases")
+def delete_learning_alias(payload: DeleteAliasRequest) -> dict[str, Any]:
+    runtime.store.remove_alias(payload.phrase)
+    removed_candidates = runtime.store.remove_alias_candidate(payload.phrase, payload.target)
+    runtime.store.audit("owner_removed_learning_entry", {
+        "phrase": payload.phrase, "target": payload.target,
+    })
+    return {"status": "removed", "phrase": payload.phrase, "candidate_rows_removed": removed_candidates}
+
+
+@router.post("/learning/reset")
+def reset_learning(payload: ResetLearningRequest) -> dict[str, Any]:
+    if not payload.confirmed:
+        return {"status": "confirmation_required", "message": "This removes learned aliases, candidates, negative examples, semantic examples and macros."}
+    result = runtime.store.remove_all_user_learning()
+    runtime.store.audit("owner_reset_all_learning", result)
+    return {"status": "reset", **result}
 
 
 @router.get("/learning")
