@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -485,8 +486,11 @@ class AgentRuntime:
         self, *, utterance: str, status: str, intent_class: str | None,
         action: str | None, confidence: float, risk: str | None, reason: str,
         confidence_signals: dict[str, float] | None, candidate_actions: list[str],
-    ) -> None:
+        decision_id: str | None = None,
+    ) -> str:
+        decision_id = decision_id or uuid.uuid4().hex
         self.store.audit("decision_made", {
+            "decision_id": decision_id,
             "utterance": utterance,
             "status": status,
             "intent_class": intent_class,
@@ -497,6 +501,33 @@ class AgentRuntime:
             "confidence_signals": confidence_signals,
             "confidence_weights": dict(DEFAULT_WEIGHTS) if confidence_signals is not None else None,
             "candidate_actions": candidate_actions,
+        })
+        return decision_id
+
+    def _record_decision_outcome(
+        self, decision: dict[str, Any], *, outcome: str,
+        verified: bool | None = None, prediction_error: float | None = None,
+        undo_id: str | None = None, automation_tier: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        decision_id = decision.get("decision_id")
+        if not decision_id:
+            return
+        self.store.audit("decision_outcome", {
+            "decision_id": decision_id,
+            "outcome": outcome,
+            "action": decision.get("action"),
+            "risk": decision.get("risk"),
+            "confidence": decision.get("confidence"),
+            "confidence_signals": decision.get("confidence_signals"),
+            "confidence_weights": decision.get("confidence_weights"),
+            "layer_timings_ms": decision.get("layer_timings_ms"),
+            "llm_calls": decision.get("llm_calls"),
+            "verified": verified,
+            "prediction_error": prediction_error,
+            "undo_id": undo_id,
+            "automation_tier": automation_tier,
+            "detail": detail,
         })
 
     async def preview(
@@ -516,12 +547,56 @@ class AgentRuntime:
     async def _preview(
         self, text: str, *, trusted_args: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        started = time.perf_counter()
+        calls_before = int(getattr(self.ollama, "call_count", 0))
+        history_before = len(getattr(self.ollama, "metrics_history", ()))
+        result = await self._preview_core(text, trusted_args=trusted_args)
+        timings = dict(result.get("layer_timings_ms") or {})
+        timings["end_to_end_preview_ms"] = round(
+            (time.perf_counter() - started) * 1000, 2,
+        )
+        history = list(getattr(self.ollama, "metrics_history", ()))
+        model_metrics = history[history_before:]
+        llm_calls = max(
+            0, int(getattr(self.ollama, "call_count", calls_before)) - calls_before,
+        )
+        llm_latency = round(
+            sum(float(item.get("latency_ms") or 0.0) for item in model_metrics), 2,
+        )
+        result["layer_timings_ms"] = timings
+        result["llm_calls"] = llm_calls
+        result["llm_latency_ms"] = llm_latency
+        if result.get("decision_id"):
+            self.store.audit("decision_layer_timings", {
+                "decision_id": result["decision_id"],
+                "layer_timings_ms": timings,
+                "llm_calls": llm_calls,
+                "llm_latency_ms": llm_latency,
+                "model_budget": result.get("model_budget"),
+            })
+        return result
+
+    async def _preview_core(
+        self, text: str, *, trusted_args: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        decision_id = uuid.uuid4().hex
+        layer_timings: dict[str, float] = {}
+        preparation_started = time.perf_counter()
         self._register_approved_macros()
         self.refresh_entities(force=False)
         normalized = " ".join(text.casefold().split())
+        layer_timings["perception_normalization_ms"] = round(
+            (time.perf_counter() - preparation_started) * 1000, 2,
+        )
+        routing_started = time.perf_counter()
         alias_used = False
         route = IntentRouter(self.registry, self.store).route(normalized, context=self.alias_context())
+        layer_timings["reflex_routing_ms"] = round(
+            (time.perf_counter() - routing_started) * 1000, 2,
+        )
         arbitration: dict[str, Any] | None = None
+        semantic_attempted = route.status != "selected" and self.semantic is not None
+        semantic_started = time.perf_counter()
         if route.status != "selected" and self.semantic is not None:
             try:
                 retrieved = await __import__("asyncio").to_thread(self.semantic.retrieve, normalized, 8)
@@ -549,6 +624,12 @@ class AgentRuntime:
                         route.candidates = [Candidate(action=action, score=score, matched_by="fastembed")]
             except Exception as exc:
                 logger.info("Semantic retrieval unavailable for this request: %s", exc)
+        layer_timings["embedding_retrieval_ms"] = (
+            round((time.perf_counter() - semantic_started) * 1000, 2)
+            if semantic_attempted else 0.0
+        )
+        llm_attempted = route.status != "selected"
+        llm_started = time.perf_counter()
         if route.status != "selected":
             tools = self._shortlist(route)
             if tools:
@@ -574,8 +655,11 @@ class AgentRuntime:
                                 action=None, confidence=0.0, risk=None,
                                 reason="model_requested_clarification", confidence_signals=None,
                                 candidate_actions=[candidate.action.name for candidate in route.candidates],
+                                decision_id=decision_id,
                             )
                             return {
+                                "decision_id": decision_id,
+                                "layer_timings_ms": dict(layer_timings),
                                 "status": "clarify",
                                 "reason": "model_requested_clarification",
                                 "clarification": str(arbitration["clarification"]),
@@ -594,8 +678,11 @@ class AgentRuntime:
                                     reason="low_confidence_self_consistency_disagreement",
                                     confidence_signals=None,
                                     candidate_actions=[candidate.action.name for candidate in route.candidates],
+                                    decision_id=decision_id,
                                 )
                                 return {
+                                    "decision_id": decision_id,
+                                    "layer_timings_ms": dict(layer_timings),
                                     "status": "clarify",
                                     "reason": "low_confidence_self_consistency_disagreement",
                                     "candidates": [candidate.model_dump(mode="json") for candidate in route.candidates],
@@ -612,6 +699,10 @@ class AgentRuntime:
                 except Exception as exc:
                     logger.info("Local arbitration unavailable: %s", exc)
 
+        layer_timings["llm_arbitration_ms"] = (
+            round((time.perf_counter() - llm_started) * 1000, 2)
+            if llm_attempted else 0.0
+        )
         action = self.registry.get(route.selected_action) if route.selected_action else None
         if not action:
             self._record_decision(
@@ -620,8 +711,11 @@ class AgentRuntime:
                 action=None, confidence=float(route.confidence), risk=None,
                 reason=route.reason, confidence_signals=None,
                 candidate_actions=[candidate.action.name for candidate in route.candidates],
+                decision_id=decision_id,
             )
             return {
+                "decision_id": decision_id,
+                "layer_timings_ms": dict(layer_timings),
                 "status": route.status, "intent_class": route.intent_class.value if route.intent_class else None,
                 "action": None, "args": {}, "confidence": route.confidence,
                 "reason": route.reason, "clarification": route.clarification,
@@ -636,8 +730,12 @@ class AgentRuntime:
             and self.store.scope_matches(alias.get("scope") or {}, current_alias_context)
             for alias in self.store.aliases()
         ) or action.name.startswith("macro.")
+        grounding_started = time.perf_counter()
         args, clarification = self._fill_args(
             text=text, action_name=action.name, supplied=trusted_args,
+        )
+        layer_timings["slot_grounding_ms"] = round(
+            (time.perf_counter() - grounding_started) * 1000, 2,
         )
         if clarification:
             route.status = "clarify"
@@ -657,15 +755,22 @@ class AgentRuntime:
             "context_prior": 1.0 if foreground else 0.5,
             "user_lexicon_hit": 1.0 if alias_used else 0.0,
         }
+        decision_gate_started = time.perf_counter()
         confidence = fuse_confidence(DecisionSignals(**signal_values))
+        layer_timings["decision_gate_ms"] = round(
+            (time.perf_counter() - decision_gate_started) * 1000, 2,
+        )
         self._record_decision(
             utterance=text, status=route.status,
             intent_class=route.intent_class.value if route.intent_class else None,
             action=action.name, confidence=confidence, risk=action.risk.value,
             reason=route.reason, confidence_signals=signal_values,
             candidate_actions=[candidate.action.name for candidate in route.candidates],
+            decision_id=decision_id,
         )
         return {
+            "decision_id": decision_id,
+            "layer_timings_ms": dict(layer_timings),
             "status": route.status, "intent_class": route.intent_class.value if route.intent_class else None,
             "action": action.name, "args": args, "confidence": confidence,
             "confidence_signals": signal_values,
