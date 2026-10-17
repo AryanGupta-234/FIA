@@ -50,7 +50,7 @@ Python:
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-ruff check fia tests
+ruff check fia prixon tests
 pytest
 ~~~
 
@@ -65,3 +65,33 @@ npm run build
 FIA cannot crawl the entire internet exhaustively. Coverage depends on the configured search provider, the results it returns, retailer permissions and robots policy. Images from image search are a fallback and may not represent the exact SKU. A visible discount is shown only when source data provides the relevant price evidence. Always verify the live retailer listing before purchase.
 
 See docs/ARCHITECTURE.md, docs/SECURITY.md and docs/ROADMAP.md.
+
+
+## Prixon — autonomous Windows agent
+
+Prixon is a separate local-first Windows 11 agent subsystem. It does not change FIA's fashion research workflow.
+
+Implemented on the feature/prixon-agent-foundation branch:
+- L0–L5 intent pipeline foundations: deterministic fast paths, class-aware hard negatives, optional local BGE retrieval, entity grounding, confidence fusion and shortlist-only Ollama arbitration.
+- Windows perception for foreground windows, process inventory, installed Start Menu applications, CPU/RAM/battery/network telemetry and WinEvent/file-system observation.
+- Explicit clipboard metadata inspection and L4-confirmed text retrieval with contents excluded from persistent audit records.
+- Optional local Vosk voice kill via Ctrl+Alt+V; push-to-listen only, with no always-on microphone or cloud speech service.
+- Bounded plans, allowlisted Win32/Settings URI adapters, postcondition checks, undo journal and a global Ctrl+Alt+Pause kill switch.
+- Persistent goals, privacy-filtered world state and exportable audit stores; process, window, Downloads/Documents/Desktop, battery and scheduled-routine events; schedules are suggestion-only by default, with separately owner-confirmed L3 execution for eligible approved macros.
+- Native Win32 first, tier-2 Windows media-session and Office metadata adapters, optional loopback Chromium debugging metadata, UI Automation and verified keyboard fallback for registered window controls, undo journal and bounded failure recovery.
+- Owner-approved promotion digest for language candidates, plus explicit macro proposals and approval.
+- A 315-case frozen/growing evaluation corpus plus a versioned 12,840-example global seed corpus for optional local BGE retrieval.
+- API routes under /api/v1/agent; local Ollama only, no hosted fallback.
+
+Grounded read-only requests use the safe reflex path; state changes remain risk-gated. Background proactive and scheduled-routine behavior is suggestion-only by default. Owner-confirmed L3 routines may run eligible read-only/reversible approved macros; L4 actions always require confirmation. Semantic retrieval is optional and disabled by default until installed and enabled. Clipboard text access requires L4 confirmation. Voice kill is opt-in and loads only a local speech model. Optional media-session support installs with `.[windows,media]`. Office metadata uses `.[windows]`; Chromium debugging diagnostics use the opt-in `.[windows,browser]` extra and a loopback-only debugging port.
+
+See docs/PRIXON_AGENT.md for setup, API endpoints, safeguards, phase status and current limitations.
+
+### Start Prixon independently
+
+~~~powershell
+./scripts/setup-prixon.ps1
+./scripts/open-prixon.ps1
+~~~
+
+The local control panel is served at `http://127.0.0.1:8000/api/v1/agent/ui`. Install a current-user Windows sign-in task with `./scripts/install-prixon-startup.ps1`, remove it with `./scripts/uninstall-prixon-startup.ps1`, or add a Start Menu shortcut with `./scripts/install-prixon-startmenu.ps1`. Logs and the PID file are stored under `%LOCALAPPDATA%\Prixon`. Startup runs as the signed-in user without administrator elevation or a stored password.

@@ -1,0 +1,565 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from prixon.consolidation import MacroPromoter
+from prixon.events import (
+    EventBus,
+    FileSystemEventObserver,
+    ProcessDeltaObserver,
+    WinEventObserver,
+    WinProcessTerminationObserver,
+)
+from prixon.kill_switch import GlobalHotkey
+from prixon.schemas import AgentPlan
+from prixon.store import AgentStore
+from prixon.voice_kill import VoiceKillListener
+
+logger = logging.getLogger(__name__)
+
+
+def _focus_mode_enabled() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
+        )
+        value, _ = winreg.QueryValueEx(key, "NOC_GLOBAL_SETTING_TOASTS_ENABLED")
+        return int(value) == 0
+    except OSError:
+        return False
+
+
+def _fullscreen_active(hwnd: int | None) -> bool:
+    if os.name != "nt" or not hwnd:
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    monitor = user32.MonitorFromWindow(hwnd, 2)
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
+    info = MONITORINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return False
+    area = info.rcMonitor
+    return (
+        abs(rect.left - area.left) <= 2 and abs(rect.top - area.top) <= 2
+        and abs(rect.right - area.right) <= 2 and abs(rect.bottom - area.bottom) <= 2
+    )
+
+
+class AgentLoop:
+    """Persistent bounded goal/event loop; proactive events remain suggestion-only."""
+
+    def __init__(self, runtime) -> None:
+        self.runtime = runtime
+        self.store: AgentStore = runtime.store
+        self.bus = EventBus()
+        self.process_observer = ProcessDeltaObserver(
+            self.bus, interval_seconds=max(2.0, runtime.settings.agent_loop_poll_seconds),
+        )
+        self.window_observer = WinEventObserver(self.bus)
+        self.file_observer = FileSystemEventObserver(self.bus)
+        self.termination_observer = WinProcessTerminationObserver(self.bus)
+        self.hotkey = GlobalHotkey(runtime.kill_switch)
+        self._asyncio_loop: asyncio.AbstractEventLoop | None = None
+        self._voice_results: list[dict[str, Any]] = []
+        self._voice_results_lock = threading.Lock()
+        self.voice_kill = VoiceKillListener(
+            runtime.kill_switch,
+            enabled=runtime.settings.voice_kill_enabled,
+            model_path=runtime.settings.voice_model_path,
+            capture_seconds=runtime.settings.voice_capture_seconds,
+            command_enabled=runtime.settings.voice_commands_enabled,
+            command_capture_seconds=runtime.settings.voice_command_capture_seconds,
+            on_command=self._submit_voice_command,
+        )
+        self._last_consolidation = float(self.store.get_setting("learning.last_consolidation", 0))
+        self._task: asyncio.Task | None = None
+        self._running = False
+        self._last_battery_check = 0.0
+        self._last_battery_low = False
+        self._last_world_state_persist = 0.0
+        self._suggestions: list[dict[str, Any]] = []
+
+    @property
+    def running(self) -> bool:
+        return self._running and bool(self._task and not self._task.done())
+
+    def suggestions(self) -> list[dict[str, Any]]:
+        return list(self._suggestions)
+
+    def recover_interrupted_goals(self) -> int:
+        interrupted = self.store.goals(("active",))
+        for goal in interrupted:
+            self.store.set_goal_status(goal["id"], "blocked")
+            self.store.audit("goal_interrupted_by_restart", {
+                "goal_id": goal["id"], "description": goal["description"],
+            })
+        return len(interrupted)
+
+    def recover_interrupted_routines(self) -> int:
+        interrupted = [
+            item for item in self.store.routine_execution_rows(200)
+            if item.get("status") == "started"
+        ]
+        recovered = 0
+        for item in interrupted:
+            changed = self.store.finish_routine_execution(
+                item["routine_id"], item["due_date"], "interrupted",
+                {"reason": "agent_restarted_before_completion_was_recorded",
+                 "automatic_replay": False},
+            )
+            if changed:
+                recovered += 1
+                self.store.audit("routine_execution_interrupted", {
+                    "routine_id": item["routine_id"],
+                    "due_date": item["due_date"],
+                    "automatic_replay": False,
+                })
+        return recovered
+
+    def replay_persisted_events(self, limit: int = 500) -> int:
+        events = self.store.pending_events(limit=limit)
+        for event in events:
+            self.bus.publish(
+                event["event_type"], event["payload"], persisted_id=event["id"],
+            )
+        return len(events)
+
+    async def start(self) -> dict[str, Any]:
+        if self.running:
+            return {"status": "already_running"}
+        self.runtime.kill_switch.reset()
+        self._running = True
+        self._asyncio_loop = asyncio.get_running_loop()
+        interrupted_count = self.recover_interrupted_goals()
+        interrupted_routines = self.recover_interrupted_routines()
+        replayed_count = self.replay_persisted_events()
+        await self.process_observer.start()
+        self.window_observer.start()
+        downloads_watched = self.file_observer.start()
+        process_exit_observer = self.termination_observer.start()
+        hotkey_registered = self.hotkey.start()
+        voice_status = await asyncio.to_thread(self.voice_kill.start)
+        self._task = asyncio.create_task(self._run(), name="PrixonAgentLoop")
+        self.store.audit("agent_loop_started", {
+            "global_hotkey_registered": hotkey_registered,
+            "voice_kill": voice_status,
+            "downloads_watched": downloads_watched,
+            "process_exit_observer": process_exit_observer,
+            "watched_folders": self.file_observer.watched_paths,
+            "interrupted_goals": interrupted_count,
+            "interrupted_routines": interrupted_routines,
+            "replayed_events": replayed_count,
+        })
+        return {
+            "status": "started",
+            "global_hotkey": "Ctrl+Alt+Pause" if hotkey_registered else "unavailable",
+            "voice_kill": voice_status,
+            "downloads_watched": downloads_watched,
+            "process_exit_observer": process_exit_observer,
+            "watched_folders": self.file_observer.watched_paths,
+            "interrupted_goals": interrupted_count,
+            "replayed_events": replayed_count,
+        }
+
+    async def stop(self, reason: str = "owner_requested") -> dict[str, Any]:
+        self._running = False
+        if self._task and self._task is not asyncio.current_task():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        self._task = None
+        await self.process_observer.stop()
+        self.window_observer.stop()
+        self.file_observer.stop()
+        self.termination_observer.stop()
+        self.hotkey.stop()
+        await asyncio.to_thread(self.voice_kill.stop)
+        self._asyncio_loop = None
+        self.store.audit("agent_loop_stopped", {"reason": reason})
+        return {"status": "stopped", "reason": reason}
+
+    def voice_results(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._voice_results_lock:
+            return [dict(item) for item in self._voice_results[-max(1, min(limit, 50)):]]
+
+    def _submit_voice_command(self, utterance: str) -> dict[str, Any]:
+        """Run a recognized push-to-talk command through the ordinary gated runtime."""
+        loop = self._asyncio_loop
+        if loop is None or not loop.is_running():
+            return {
+                "status": "runtime_unavailable",
+                "spoken_response": "Prixon is not running. Start the agent first.",
+            }
+        future = asyncio.run_coroutine_threadsafe(
+            self.runtime.run_request(utterance, execute=None, confirmed=False),
+            loop,
+        )
+        try:
+            result = future.result(timeout=90)
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "spoken_response": f"The voice command could not finish: {type(exc).__name__}.",
+            }
+
+        status = str(result.get("status") or "unknown")
+        action = result.get("action")
+        if status == "confirmation_required":
+            spoken = "That action needs explicit confirmation in Prixon."
+        elif status in {"clarify", "unresolved"}:
+            spoken = str(result.get("clarification") or "I need one more detail before acting.")
+        elif status in {"completed", "partially_recovered"}:
+            spoken = str(result.get("answer") or "Done.")
+        elif status in {"planned", "preview"}:
+            spoken = "I prepared a safe plan. Review it in Prixon before running."
+        else:
+            spoken = "I could not complete that request safely."
+        record = {
+            "created_at": time.time(),
+            "status": status,
+            "action": str(action) if action else None,
+            "spoken_response": spoken[:240],
+        }
+        with self._voice_results_lock:
+            self._voice_results.append(record)
+            self._voice_results = self._voice_results[-50:]
+        return {
+            "status": status,
+            "action": record["action"],
+            "spoken_response": record["spoken_response"],
+        }
+
+    async def _run(self) -> None:
+        while self._running:
+            if self.runtime.kill_switch.active:
+                await self.stop(self.runtime.kill_switch.reason)
+                return
+            now = time.time()
+            if now - self._last_world_state_persist >= 30:
+                try:
+                    situation = await asyncio.to_thread(self.runtime.situation)
+                    foreground = situation.get("foreground_app") or {}
+                    goals = situation.get("active_goals") or []
+                    compact_state = {
+                        "captured_at": now,
+                        "foreground_app": {
+                            key: foreground.get(key)
+                            for key in ("handle", "pid", "title", "sensitive")
+                            if key in foreground
+                        },
+                        "open_windows": [
+                            {
+                                key: window.get(key)
+                                for key in ("handle", "pid", "process", "title", "minimized", "foreground")
+                                if key in window
+                            }
+                            for window in situation.get("open_windows", [])[:30]
+                        ],
+                        "system": situation.get("system", {}),
+                        "owner_context": situation.get("owner_context", {}),
+                        "active_goals": [
+                            {
+                                "id": goal.get("id"),
+                                "priority": goal.get("priority"),
+                                "status": goal.get("status"),
+                                "source": goal.get("source"),
+                            }
+                            for goal in goals[:20]
+                        ],
+                    }
+                    await asyncio.to_thread(
+                        self.store.save_world_state, compact_state,
+                        source="agent_loop_periodic",
+                    )
+                    self._last_world_state_persist = now
+                except Exception:
+                    logger.exception("World-state persistence failed")
+            if now - self._last_battery_check >= 60:
+                self._check_battery()
+                self._last_battery_check = now
+            for event in self.bus.drain(100):
+                persisted_id = event.persisted_id or self.store.enqueue_event(
+                    event.event_type, event.payload,
+                )
+                routine_auto_execution = (
+                    event.event_type == "routine_due"
+                    and bool(event.payload.get("auto_execute"))
+                )
+                if routine_auto_execution:
+                    routine_id = int(event.payload.get("routine_id") or 0)
+                    macro_id = int(event.payload.get("macro_id") or 0)
+                    due_date = str(event.payload.get("run_date") or "")
+                    claimed = bool(
+                        routine_id and macro_id and due_date
+                        and self.store.claim_routine_execution(routine_id, due_date)
+                    )
+                    if not claimed:
+                        self.store.audit("routine_execution_duplicate_suppressed", {
+                            "routine_id": routine_id,
+                            "due_date": due_date,
+                            "reason": "already_claimed_or_invalid_run_key",
+                        })
+                    else:
+                        try:
+                            routine_result = await self.runtime.run_macro(
+                                macro_id, {}, execute=True, confirmed=False,
+                                session_id=f"routine:{routine_id}:{due_date}",
+                            )
+                            raw_execution = routine_result.get("execution") or {}
+                            step_results = raw_execution.get("steps") or []
+                            success = (
+                                routine_result.get("status") == "completed"
+                                and bool(step_results)
+                                and all(
+                                    item.get("success") and item.get("verified")
+                                    for item in step_results
+                                )
+                            )
+                            run_status = "completed" if success else "failed"
+                            safe_result = self.runtime._safe_execution_audit(routine_result)
+                        except Exception as exc:
+                            run_status = "failed"
+                            safe_result = {
+                                "status": "failed",
+                                "error": f"{type(exc).__name__}:{exc}",
+                            }
+                        self.store.finish_routine_execution(
+                            routine_id, due_date, run_status, safe_result,
+                        )
+                        completion_event = (
+                            "routine_completed" if run_status == "completed"
+                            else "routine_failed"
+                        )
+                        self.bus.publish(completion_event, {
+                            "routine_id": routine_id,
+                            "macro_id": macro_id,
+                            "run_date": due_date,
+                            "title": str(event.payload.get("title") or "Scheduled routine"),
+                            "message": (
+                                "Your approved routine completed and every step was verified."
+                                if run_status == "completed"
+                                else "Your approved routine did not complete successfully. Review its run details."
+                            ),
+                        })
+                        self.store.audit("routine_execution_finished", {
+                            "routine_id": routine_id,
+                            "macro_id": macro_id,
+                            "due_date": due_date,
+                            "status": run_status,
+                            "result": safe_result,
+                        })
+                if event.event_type in {"file_created", "file_moved", "folder_created", "folder_moved"}:
+                    path = event.payload.get("path")
+                    if path:
+                        target_path = Path(str(path))
+                        kind = "folder" if event.payload.get("is_directory") else "file"
+                        if target_path.exists():
+                            self.runtime.index.refresh(kind, [{
+                                "name": target_path.name, "target": str(target_path.resolve()),
+                                "modified_at": event.payload.get("modified_at"),
+                                "size_bytes": event.payload.get("size_bytes"),
+                            }], source="filesystem_event")
+                if event.event_type in {"file_deleted", "folder_deleted"}:
+                    path = str(event.payload.get("path") or "")
+                    if path:
+                        self.store.remove_entity_target(path)
+                if event.event_type == "window_destroyed":
+                    handle = str(event.payload.get("hwnd") or "")
+                    if handle:
+                        self.runtime.executor.adapters.invalidate_window_cache(int(handle))
+                        self.runtime.index.remove_target("window", handle)
+                        self.runtime.references.forget(handle)
+                elif event.event_type == "window_created":
+                    handle = event.payload.get("hwnd")
+                    if handle:
+                        self.runtime.executor.adapters.invalidate_window_cache(int(handle))
+                    # Rebuild a bounded snapshot to pick up the new top-level HWND.
+                    await asyncio.to_thread(self.runtime.refresh_entities, True)
+                elif event.event_type == "foreground_changed":
+                    handle = event.payload.get("hwnd")
+                    if handle:
+                        self.runtime.executor.adapters.invalidate_window_cache(int(handle))
+                    if event.payload.get("sensitive"):
+                        self.runtime.references.clear()
+                    elif event.payload.get("hwnd") and event.payload.get("title"):
+                        entity = {
+                            "kind": "window", "name": event.payload["title"],
+                            "target": str(event.payload["hwnd"]),
+                            "hwnd": int(event.payload["hwnd"]),
+                        }
+                        self.runtime.references.remember(entity)
+                        self.runtime.index.refresh("window", [{
+                            "name": entity["name"], "target": entity["target"],
+                            "handle": entity["hwnd"],
+                        }])
+                focus = _focus_mode_enabled()
+                foreground = self.runtime.perception.snapshot().get("foreground_window")
+                fullscreen = _fullscreen_active(
+                    int(foreground["handle"]) if foreground and foreground.get("handle") else None
+                )
+                candidate = None if routine_auto_execution else self.runtime.proactive.candidate(
+                    event.event_type, event.payload,
+                    focus_mode=focus, fullscreen=fullscreen,
+                )
+                if candidate:
+                    try:
+                        foreground = foreground or {}
+                        compact_situation = {
+                            "foreground_app": {
+                                key: foreground.get(key)
+                                for key in ("title", "pid", "sensitive")
+                                if key in foreground
+                            } if not foreground.get("sensitive") else None,
+                            "local_time": time.strftime("%H:%M"),
+                            "weekday": time.strftime("%A"),
+                            "owner_busy": bool(focus or fullscreen),
+                        }
+                        async with self.runtime.ollama.request_budget(128):
+                            judgement = await self.runtime.ollama.assess_proactive(
+                                trigger=candidate.trigger,
+                                candidate_title=candidate.title,
+                                candidate_message=candidate.message,
+                                situation=compact_situation,
+                            )
+                        if judgement.get("worth_interrupting"):
+                            suggestion = self.runtime.proactive.commit_candidate(
+                                candidate,
+                                message=judgement.get("message") or candidate.message,
+                                model_reason=judgement.get("reason"),
+                            )
+                        else:
+                            self.runtime.proactive.suppress_candidate(
+                                candidate, judgement.get("reason") or "model_veto",
+                            )
+                            suggestion = None
+                    except Exception as exc:
+                        self.runtime.proactive.suppress_candidate(
+                            candidate, f"local_judgement_unavailable:{type(exc).__name__}",
+                        )
+                        suggestion = None
+                    if suggestion:
+                        item = {
+                            "trigger": suggestion.trigger, "title": suggestion.title,
+                            "message": suggestion.message, "created_at": suggestion.created_at,
+                            "score": suggestion.score,
+                        }
+                        self._suggestions.append(item)
+                        self._suggestions = self._suggestions[-50:]
+                self.store.mark_event_processed(persisted_id)
+            self._emit_due_routines()
+            if now - self._last_consolidation >= 86400:
+                await self._run_consolidation(now)
+            await asyncio.to_thread(self.runtime.process_pending_learning, 30)
+            await self._continue_explicit_goals()
+            await asyncio.sleep(max(0.5, self.runtime.settings.agent_loop_poll_seconds))
+
+    def _emit_due_routines(self) -> int:
+        now_local = __import__("datetime").datetime.now().astimezone()
+        due = self.store.due_routines(now_local)
+        for routine in due:
+            self.bus.publish("routine_due", {
+                "routine_id": routine["id"], "macro_id": routine["macro_id"],
+                "title": routine["name"],
+                "message": f"Your approved routine is scheduled for {routine['time_local']}. Review it before running.",
+                "auto_execute": routine.get("auto_execute", False),
+                "run_date": routine.get("run_date"),
+            }, persisted_id=routine["event_id"])
+        return len(due)
+
+    def _check_battery(self) -> None:
+        try:
+            battery = self.runtime.perception.snapshot().get("battery")
+            if not battery:
+                return
+            low = float(battery["percent"]) <= 20 and not battery["plugged_in"]
+            if low and not self._last_battery_low:
+                self.bus.publish("battery_low", {"percent": battery["percent"]})
+            self._last_battery_low = low
+        except Exception:
+            logger.exception("Battery event check failed")
+
+    async def _run_consolidation(self, now: float) -> None:
+        try:
+            lexicon_result = self.runtime.lexicon.consolidate()
+            macro_result = await asyncio.to_thread(
+                MacroPromoter(self.store, self.runtime.registry).consolidate,
+            )
+            audit_rotation = await asyncio.to_thread(self.store.rotate_audit, 30)
+            self._last_consolidation = now
+            self.store.set_setting("learning.last_consolidation", now)
+            self.store.audit("nightly_consolidation_finished", {
+                "lexicon": lexicon_result, "macros_proposed": macro_result["count"],
+                "audit_rotation": audit_rotation,
+            })
+        except Exception:
+            logger.exception("Nightly consolidation failed")
+
+    async def _continue_explicit_goals(self) -> None:
+        for goal in self.store.goals(("pending",)):
+            payload = goal.get("payload") or {}
+            raw_plan = payload.get("plan")
+            if not raw_plan:
+                continue
+            try:
+                plan = AgentPlan.model_validate(raw_plan)
+                sensitive_actions = [
+                    step.tool for step in plan.steps
+                    if (
+                        self.runtime.registry.get(step.tool)
+                        and self.runtime.registry.get(step.tool).sensitive_output
+                    )
+                ]
+                if sensitive_actions:
+                    self.store.set_goal_status(goal["id"], "blocked")
+                    self.store.audit("goal_blocked_interactive_sensitive_output", {
+                        "goal_id": goal["id"],
+                        "actions": sensitive_actions,
+                        "reason": "sensitive output is limited to direct interactive requests",
+                    })
+                    continue
+                self.store.set_goal_status(goal["id"], "active")
+                result = await asyncio.to_thread(
+                    self.runtime.executor.execute_plan, plan,
+                    confirmed=bool(payload.get("confirmed", False)),
+                )
+                status = "completed" if result.get("status") == "completed" else "blocked"
+                self.store.set_goal_status(goal["id"], status)
+                self.store.episode(
+                    goal["description"], ["goal_stack", "executor", "verifier"],
+                    plan.model_dump(mode="json"), "success" if status == "completed" else "failure",
+                    result.get("reason"),
+                )
+                self.store.audit("goal_execution_finished", {
+                    "goal_id": goal["id"], "status": status,
+                    "result": self.runtime._safe_execution_audit(result),
+                })
+            except Exception as exc:
+                self.store.set_goal_status(goal["id"], "blocked")
+                self.store.audit("goal_execution_error", {
+                    "goal_id": goal["id"], "error": f"{type(exc).__name__}:{exc}",
+                })

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 
@@ -24,6 +25,9 @@ from fia.models import (
 from fia.research import create_job, schedule_research
 from fia.schemas import PreferenceUpdate, ResearchRequest, SavedSearchCreate, SavedSearchUpdate
 from fia.services.freshness import price_freshness
+from prixon.api import agent_loop
+from prixon.api import router as prixon_router
+from prixon.config import PrixonSettings
 
 settings = get_settings()
 
@@ -97,15 +101,21 @@ def _product_payload(
 async def lifespan(_app: FastAPI):
     init_db()
     scheduler = asyncio.create_task(auto_refresh_loop())
+    prixon_settings = PrixonSettings()
+    if os.name == "nt" and prixon_settings.agent_autostart:
+        await agent_loop.start()
     try:
         yield
     finally:
+        if agent_loop.running:
+            await agent_loop.stop("api_shutdown")
         scheduler.cancel()
         with suppress(asyncio.CancelledError):
             await scheduler
 
 
 app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
+app.include_router(prixon_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,

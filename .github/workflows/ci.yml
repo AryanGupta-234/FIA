@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, feature/prixon-agent-foundation]
   pull_request:
     branches: [main, dev]
 jobs:
@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
-      - run: ruff check fia tests
+      - run: ruff check fia prixon tests
       - run: pytest
   frontend:
     runs-on: ubuntu-latest
