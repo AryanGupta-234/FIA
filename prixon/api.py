@@ -343,8 +343,14 @@ def runtime_status() -> dict[str, Any]:
         "event_queue_size": agent_loop.bus.size,
         "kill_switch_active": runtime.kill_switch.active,
         "kill_switch_reason": runtime.kill_switch.reason,
+        "voice_kill": agent_loop.voice_kill.status(),
         "suggestions_pending": len(agent_loop.suggestions()),
     }
+
+
+@router.get("/voice/status")
+def voice_status() -> dict[str, Any]:
+    return agent_loop.voice_kill.status()
 
 
 @router.get("/suggestions")
