@@ -14,6 +14,7 @@ class PrixonSettings(BaseSettings):
     agent_max_actions_per_minute: int = 20
     agent_loop_poll_seconds: float = 2.0
     semantic_enabled: bool = False
+    semantic_model_name: str = "BAAI/bge-small-en-v1.5"
     agent_autostart: bool = True
     voice_kill_enabled: bool = False
     voice_model_path: str = ""

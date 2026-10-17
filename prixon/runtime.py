@@ -101,7 +101,11 @@ class AgentRuntime:
         self.semantic: SemanticRetriever | None = None
         if self.settings.semantic_enabled:
             try:
-                self.semantic = SemanticRetriever(self.registry, FastEmbedAdapter(), self.store)
+                self.semantic = SemanticRetriever(
+                    self.registry,
+                    FastEmbedAdapter(self.settings.semantic_model_name),
+                    self.store,
+                )
             except (RuntimeError, OSError, ValueError):
                 logger.exception("Semantic retrieval unavailable; deterministic path remains active")
         self.index = EntityIndex(
