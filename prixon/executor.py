@@ -4,6 +4,7 @@ import os
 import shutil
 import time
 import uuid
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,7 @@ class ExecutionBudget:
     wall_clock_seconds: float = 60.0
     max_model_tokens: int = 1024
     step_timeout_seconds: float = 12.0
+    max_actions_per_minute: int = 30
 
 
 @dataclass
@@ -356,6 +358,7 @@ class ActionExecutor:
         self.budget = budget or ExecutionBudget()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PrixonAction")
         self._seen_steps: dict[str, int] = {}
+        self._action_times: deque[float] = deque()
 
     def execute_action(
         self, action_name: str, args: dict[str, Any], *,
@@ -366,6 +369,12 @@ class ActionExecutor:
             return ActionResult(False, action_name, error="unknown_action")
         if self.kill_switch and self.kill_switch.active:
             return ActionResult(False, action_name, error="kill_switch_active")
+        now = time.monotonic()
+        while self._action_times and now - self._action_times[0] >= 60:
+            self._action_times.popleft()
+        if len(self._action_times) >= self.budget.max_actions_per_minute:
+            return ActionResult(False, action_name, error="action_rate_limit_exceeded")
+        self._action_times.append(now)
         if any(key in args for key in ("command", "shell", "script", "powershell")):
             return ActionResult(False, action_name, error="arbitrary_command_arguments_rejected")
         for slot in action.required_slots:
@@ -477,7 +486,10 @@ class ActionExecutor:
             self._seen_steps[signature] = self._seen_steps.get(signature, 0) + 1
             if self._seen_steps[signature] > 2:
                 return {"status": "aborted", "reason": "loop_detected", "steps": results}
-            resolved_args = self._resolve_previous_references(step.args, results)
+            try:
+                resolved_args = self._resolve_previous_references(step.args, results)
+            except ValueError as exc:
+                return {"status": "blocked", "reason": str(exc), "steps": results}
             action_result = self.execute_action(
                 step.tool, resolved_args, confirmed=confirmed, confidence=step.confidence,
             )
