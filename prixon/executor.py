@@ -91,6 +91,84 @@ class WindowsActionAdapters:
         if os.name != "nt":
             raise OSError("This Prixon action is available only on Windows 11.")
 
+    def execute_tier(
+        self, action: str, args: dict[str, Any], tier: str,
+    ) -> dict[str, Any]:
+        if tier in {"native_api", "win32", "uri_scheme", "shell_uri"}:
+            return self.execute(action, args)
+        if tier == "ui_automation":
+            return self._execute_ui_automation(action, args)
+        if tier == "keyboard":
+            return self._execute_keyboard(action, args)
+        raise ValueError(f"Unsupported automation tier: {tier}")
+
+    def _execute_ui_automation(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
+        self._require_windows()
+        if action not in {
+            "window.minimize", "window.maximize", "window.restore", "window.close",
+        }:
+            raise ValueError(f"UI Automation fallback is not registered for {action}.")
+        try:
+            from pywinauto import Application
+        except ImportError as exc:
+            raise RuntimeError("UI Automation fallback requires the optional pywinauto extra.") from exc
+        hwnd = self._window_handle(args)
+        if not hwnd:
+            raise ValueError("A grounded window handle is required.")
+        app = Application(backend="uia").connect(handle=hwnd, timeout=2)
+        window = app.window(handle=hwnd)
+        if action == "window.minimize":
+            window.minimize()
+        elif action == "window.maximize":
+            window.maximize()
+        elif action == "window.restore":
+            window.restore()
+        else:
+            window.close()
+        return {
+            "hwnd": hwnd,
+            "iconic": bool(window.is_minimized()) if action != "window.close" else False,
+            "zoomed": bool(window.is_maximized()) if action != "window.close" else False,
+            "close_requested": action == "window.close",
+            "automation_tier": "ui_automation",
+        }
+
+    def _execute_keyboard(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
+        self._require_windows()
+        if action not in {"window.minimize", "window.maximize", "window.restore"}:
+            raise ValueError(f"Keyboard fallback is not registered for {action}.")
+        hwnd = self._window_handle(args)
+        if not hwnd:
+            raise ValueError("A grounded window handle is required.")
+        import ctypes
+        user32 = ctypes.windll.user32
+        if not user32.IsWindow(hwnd):
+            raise ValueError("The grounded target window no longer exists.")
+        user32.SetForegroundWindow(hwnd)
+        time.sleep(0.1)
+        if int(user32.GetForegroundWindow()) != hwnd:
+            raise RuntimeError("Target window could not be focused; keyboard input was not sent.")
+
+        keybd_event = user32.keybd_event
+        keybd_event(0x12, 0, 0, 0)  # ALT down
+        keybd_event(0x20, 0, 0, 0)  # SPACE down
+        keybd_event(0x20, 0, 0x0002, 0)  # SPACE up
+        keybd_event(0x12, 0, 0x0002, 0)  # ALT up
+        command = {
+            "window.minimize": ord("N"),
+            "window.maximize": ord("X"),
+            "window.restore": ord("R"),
+        }[action]
+        keybd_event(command, 0, 0, 0)
+        keybd_event(command, 0, 0x0002, 0)
+        time.sleep(0.1)
+        return {
+            "hwnd": hwnd,
+            "iconic": bool(user32.IsIconic(hwnd)),
+            "zoomed": bool(user32.IsZoomed(hwnd)),
+            "automation_tier": "keyboard",
+        }
+
     def execute(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
         if action == "system.status":
             return self.perception.snapshot()
@@ -421,34 +499,62 @@ class ActionExecutor:
             undo_id = self.store.record_undo(
                 action_name, args, before, utterance=utterance, session_id=session_id,
             )
-        future = self._executor.submit(self.adapters.execute, action_name, args)
-        try:
-            output = future.result(timeout=self.budget.step_timeout_seconds)
-        except TimeoutError:
-            self.store.audit("action_timeout", {"action": action_name, "args": args})
-            if undo_id:
-                self.store.finish_undo(undo_id, "failed")
-            return ActionResult(False, action_name, error="action_timeout", undo_id=undo_id)
-        except Exception as exc:
-            self.store.audit("action_failed", {"action": action_name, "error": str(exc)})
-            if undo_id:
-                self.store.finish_undo(undo_id, "failed")
-            return ActionResult(False, action_name, error=f"{type(exc).__name__}:{exc}", undo_id=undo_id)
+        failures: list[str] = []
+        output: dict[str, Any] = {}
+        verified = False
+        selected_tier: str | None = None
+        for tier in action.automation_tiers or ("native_api",):
+            if self.kill_switch and self.kill_switch.active:
+                failures.append("kill_switch_active")
+                break
+            future = self._executor.submit(
+                self.adapters.execute_tier, action_name, args, tier,
+            )
+            try:
+                candidate = future.result(timeout=self.budget.step_timeout_seconds)
+            except TimeoutError:
+                failures.append(f"{tier}:timeout")
+                future.cancel()
+                self.store.audit("automation_tier_timeout", {
+                    "action": action_name, "tier": tier, "args": args,
+                })
+                continue
+            except Exception as exc:
+                failures.append(f"{tier}:{type(exc).__name__}:{exc}")
+                self.store.audit("automation_tier_failed", {
+                    "action": action_name, "tier": tier, "error": str(exc),
+                })
+                continue
 
-        verified = self.verify(action_name, args, output)
+            candidate = dict(candidate)
+            candidate["automation_tier"] = tier
+            if self.verify(action_name, args, candidate):
+                output, selected_tier, verified = candidate, tier, True
+                break
+            failures.append(f"{tier}:postcondition_failed")
+            output, selected_tier = candidate, tier
+            self.store.audit("automation_tier_verification_failed", {
+                "action": action_name, "tier": tier, "output": candidate,
+            })
+
         if undo_id:
             self.store.update_undo_output(undo_id, output)
         if not verified:
-            self.store.audit("verification_failed", {"action": action_name, "output": output})
+            self.store.audit("verification_failed", {
+                "action": action_name, "output": output, "tier_failures": failures,
+            })
             if undo_id:
                 try:
                     rolled_back = self.adapters.undo(action_name, args, before, output)
                 except Exception:
                     rolled_back = False
                 self.store.finish_undo(undo_id, "undone" if rolled_back else "failed")
-            return ActionResult(False, action_name, output, "postcondition_failed", undo_id, False)
+            reason = "automation_tiers_exhausted:" + "|".join(failures)
+            return ActionResult(False, action_name, output, reason, undo_id, False)
         self.store.audit("action_completed", {
-            "action": action_name, "args": args, "output": output, "undo_id": undo_id,
+            "action": action_name, "args": args, "output": output,
+            "undo_id": undo_id, "automation_tier": selected_tier,
+            "tier_failures": failures,
         })
         return ActionResult(True, action_name, output, undo_id=undo_id, verified=True)
 
