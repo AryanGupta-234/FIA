@@ -25,6 +25,7 @@ class AgentEvent:
     event_type: str
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
+    persisted_id: int | None = None
 
 
 class EventBus:
@@ -37,8 +38,11 @@ class EventBus:
         with self._lock:
             self._subscribers.append(callback)
 
-    def publish(self, event_type: str, payload: dict[str, Any] | None = None) -> AgentEvent:
-        event = AgentEvent(event_type, payload or {})
+    def publish(
+        self, event_type: str, payload: dict[str, Any] | None = None,
+        *, persisted_id: int | None = None,
+    ) -> AgentEvent:
+        event = AgentEvent(event_type, payload or {}, persisted_id=persisted_id)
         with self._lock:
             self._queue.append(event)
             subscribers = list(self._subscribers)
