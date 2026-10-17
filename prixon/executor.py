@@ -13,7 +13,11 @@ from typing import Any
 
 import psutil
 
-from prixon.app_adapters import WindowsMediaSessionAdapter, WindowsOfficeAdapter
+from prixon.app_adapters import (
+    ChromiumDebugAdapter,
+    WindowsMediaSessionAdapter,
+    WindowsOfficeAdapter,
+)
 from prixon.governance import decide
 from prixon.perception import WindowsPerception
 from prixon.registry import ActionRegistry
@@ -56,10 +60,19 @@ class WindowsActionAdapters:
         "windows update": "ms-settings:windowsupdate",
     }
 
-    def __init__(self, perception: WindowsPerception) -> None:
+    def __init__(
+        self,
+        perception: WindowsPerception,
+        *,
+        browser_debug_enabled: bool = False,
+        browser_debug_port: int = 9222,
+    ) -> None:
         self.perception = perception
         self.media = WindowsMediaSessionAdapter()
         self.office = WindowsOfficeAdapter()
+        self.browser = ChromiumDebugAdapter(
+            enabled=browser_debug_enabled, port=browser_debug_port,
+        )
         self._uia_cache: dict[int, tuple[float, list[dict[str, str]]]] = {}
         self._uia_cache_lock = threading.Lock()
         self._uia_cache_ttl_seconds = 3.0
@@ -168,6 +181,9 @@ class WindowsActionAdapters:
                     import win32com.client  # noqa: F401
                 except ImportError:
                     return "office_automation_dependency_missing"
+            elif precondition == "browser_debug_enabled":
+                if not self.browser.enabled:
+                    return "browser_debugging_disabled"
             elif precondition == "setting_uri_allowlisted":
                 setting = str(args.get("setting") or "").casefold().strip()
                 if setting not in self.SETTINGS_URIS:
@@ -189,6 +205,8 @@ class WindowsActionAdapters:
                 return self.media.execute(action, args)
             if action.startswith("office."):
                 return self.office.execute(action, args)
+            if action.startswith("browser."):
+                return self.browser.execute(action, args)
             raise ValueError(f"No tier-2 adapter is registered for {action}.")
         if tier in {"native_api", "win32", "uri_scheme", "shell_uri"}:
             return self.execute(action, args)
@@ -873,6 +891,14 @@ class ActionExecutor:
                 output.get("automation_available") is True
                 and "open_document_count" in output
                 and "unsaved_document_count" in output
+            )
+        if action_name == "browser.debug_status":
+            return (
+                output.get("reachable") is True
+                and output.get("metadata_only") is True
+                and output.get("urls_read") is False
+                and output.get("titles_read") is False
+                and output.get("page_content_read") is False
             )
         if action_name == "media.play":
             return bool(output.get("accepted")) and output.get("playback_status") == "playing"
