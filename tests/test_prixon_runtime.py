@@ -21,6 +21,7 @@ from prixon.planner import validate_plan
 from prixon.proactive import ProactiveEngine
 from prixon.registry import ActionRegistry
 from prixon.router import IntentRouter
+from prixon.runtime import AgentRuntime
 from prixon.schemas import AgentPlan, PlanStep, RiskTier
 from prixon.store import AgentStore
 
@@ -583,3 +584,39 @@ def test_router_application_slot_and_level_slot_require_valid_values():
     assert router.route("open calculator").selected_action == "app.launch"
     assert router.route("set volume to 30").selected_action == "volume.set"
     assert router.route("set volume to 250").selected_action == "volume.set"
+
+
+def test_volume_slot_values_are_validated_during_grounding(tmp_path):
+    class FakePerception:
+        def snapshot(self):
+            return {
+                "platform": "test", "is_windows": False, "captured_at": 1,
+                "cpu_percent": 5, "memory": {"total_bytes": 100, "available_bytes": 50, "percent": 50},
+                "battery": None, "network": {}, "foreground_window": None, "process_count": 2,
+            }
+        def processes(self, limit=100):
+            return []
+        def installed_apps(self):
+            return []
+        def known_folders(self):
+            return []
+        def recent_files(self, limit=100):
+            return []
+
+    class FakeOllama:
+        last_metrics = {}
+        model = "test"
+
+    runtime = AgentRuntime(
+        store=AgentStore(tmp_path / "volume-slot.sqlite3"),
+        perception=FakePerception(),
+        ollama=FakeOllama(),
+    )
+    try:
+        args, error = runtime._fill_args(
+            "volume.set", "set volume to 250", {"level": 250},
+        )
+        assert args["level"] == 250
+        assert error == "Volume level must be between 0 and 100."
+    finally:
+        runtime.executor.shutdown()
