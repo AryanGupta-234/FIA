@@ -317,9 +317,22 @@ class AgentStore:
                     (date_key, time.time(), row["id"], date_key),
                 )
                 if cursor.rowcount == 1:
+                    payload = {
+                        "routine_id": row["id"],
+                        "macro_id": row["macro_id"],
+                        "title": row["name"],
+                        "message": (
+                            f"Your approved routine is scheduled for {row['time_local']}. "
+                            "Review it before running."
+                        ),
+                    }
+                    event_cursor = db.execute(
+                        "INSERT INTO event_queue(event_type,payload_json,created_at) VALUES(?,?,?)",
+                        ("routine_due", json.dumps(payload), time.time()),
+                    )
                     due.append({
                         "id": row["id"], "name": row["name"], "macro_id": row["macro_id"],
-                        "time_local": row["time_local"],
+                        "time_local": row["time_local"], "event_id": int(event_cursor.lastrowid),
                     })
         return due
 
