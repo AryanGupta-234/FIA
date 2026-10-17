@@ -330,8 +330,11 @@ class ActionExecutor:
                 False, action_name, error=decision.reason,
                 output={"requires_confirmation": decision.requires_confirmation},
             )
-        if confidence < 0.50:
-            return ActionResult(False, action_name, error="confidence_below_execution_floor")
+        from prixon.confidence import meets_risk_threshold
+        if action.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(
+            confidence, action.risk.value,
+        ):
+            return ActionResult(False, action_name, error="confidence_below_risk_threshold")
         if action.risk != RiskTier.READ_ONLY and not action.undo_supported and action.risk != RiskTier.ALWAYS_CONFIRM:
             return ActionResult(False, action_name, error="state_change_without_undo_recipe_blocked")
 
@@ -414,7 +417,9 @@ class ActionExecutor:
             if self._seen_steps[signature] > 2:
                 return {"status": "aborted", "reason": "loop_detected", "steps": results}
             resolved_args = self._resolve_previous_references(step.args, results)
-            action_result = self.execute_action(step.tool, resolved_args, confirmed=confirmed)
+            action_result = self.execute_action(
+                step.tool, resolved_args, confirmed=confirmed, confidence=step.confidence,
+            )
             if not action_result.success:
                 action = self.registry.get(step.tool)
                 retryable = action is not None and (
@@ -423,7 +428,9 @@ class ActionExecutor:
                 )
                 if retryable:
                     time.sleep(0.25)
-                    action_result = self.execute_action(step.tool, resolved_args, confirmed=confirmed)
+                    action_result = self.execute_action(
+                        step.tool, resolved_args, confirmed=confirmed, confidence=step.confidence,
+                    )
             item = {
                 "index": index, "action": action_result.action,
                 "success": action_result.success, "verified": action_result.verified,
