@@ -372,7 +372,7 @@ class AgentStore:
 
     def record_macro(
         self, shape_hash: str, name: str, plan: dict[str, Any], trigger: str,
-        *, approved: bool = False,
+        *, approved: bool = False, evidence_count: int = 1,
     ) -> None:
         with self.connect() as db:
             row = db.execute("SELECT * FROM macros WHERE shape_hash=?", (shape_hash,)).fetchone()
@@ -380,7 +380,7 @@ class AgentStore:
             successes = int(row["successes"]) if row else 0
             if trigger and trigger not in phrases:
                 phrases.append(trigger)
-            successes += 1
+            successes += max(1, evidence_count)
             db.execute(
                 """INSERT INTO macros(shape_hash,name,plan_json,trigger_phrases_json,successes,approved,updated_at)
                    VALUES(?,?,?,?,?,?,?)
