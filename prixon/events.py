@@ -12,6 +12,14 @@ from typing import Any, Callable
 import psutil
 
 
+class WindowsPerceptionTitleFilter:
+    SENSITIVE_TERMS = (
+        "password", "credential", "sign in", "sign-in", "log in", "login",
+        "windows security", "security key", "authentication", "authenticator",
+        "two-factor", "2fa", "pin entry",
+    )
+
+
 @dataclass(frozen=True)
 class AgentEvent:
     event_type: str
@@ -161,7 +169,14 @@ class WinEventObserver:
                 length = user32.GetWindowTextLengthW(hwnd)
                 title = ctypes.create_unicode_buffer(min(length + 1, 512))
                 user32.GetWindowTextW(hwnd, title, len(title))
-                payload["title"] = title.value[:500]
+                raw_title = title.value[:500]
+                sensitive_terms = WindowsPerceptionTitleFilter.SENSITIVE_TERMS
+                if any(term in raw_title.casefold() for term in sensitive_terms):
+                    payload["title"] = None
+                    payload["sensitive"] = True
+                else:
+                    payload["title"] = raw_title
+                    payload["sensitive"] = False
             self.bus.publish(event_name, payload)
 
         callback_ref = callback_type(callback)
