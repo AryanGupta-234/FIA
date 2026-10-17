@@ -54,10 +54,18 @@ class IntentRouter:
             )
 
         candidates: list[Candidate] = []
+        owner_aliases = self.store.aliases() if self.store is not None else []
         for action in self.registry.by_class(intent_class):
-            if any(normalize(negative) == normalized for negative in action.hard_negatives):
+            action_aliases = [
+                alias["phrase"] for alias in owner_aliases
+                if alias["target_type"] == "action" and alias["target"] == action.name
+            ]
+            if (
+                any(normalize(negative) == normalized for negative in action.hard_negatives)
+                and not any(phrase in normalized for phrase in action_aliases)
+            ):
                 continue
-            phrases = (action.name.replace(".", " "), *action.examples)
+            phrases = (action.name.replace(".", " "), *action.examples, *action_aliases)
             best = max((self._phrase_score(normalized, phrase) for phrase in phrases), default=0)
             if self.store is not None and best > 0:
                 for negative in self.store.negative_examples():
