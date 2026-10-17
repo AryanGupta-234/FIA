@@ -41,6 +41,7 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
       <button class="active" data-view="overview"><span class="glyph">◈</span>Overview</button>
       <button data-view="command"><span class="glyph">⌘</span>Command Center</button>
       <button data-view="goals"><span class="glyph">◎</span>Goals & Signals</button>
+      <button data-view="learning"><span class="glyph">⌁</span>Learning</button>
       <button data-view="activity"><span class="glyph">≋</span>Activity</button>
     </nav></div>
     <div class="sidebar-bottom">
@@ -101,6 +102,23 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
         <div id="routineResult" class="result"><strong id="routineResultTitle"></strong><p id="routineResultBody"></p></div>
         <div id="routineList" class="list" style="margin-top:12px"></div>
         <div class="panel-sub" style="margin-top:14px">Recent routine runs</div><div id="routineRunList" class="list"></div>
+      </div>
+    </section>
+    <section id="view-learning" class="view">
+      <div class="panel">
+        <div class="panel-head"><div><div class="panel-title">Owner Language & Memory</div><div class="panel-sub">Inspect contextual aliases, promotion candidates and what Prixon has learned from your feedback.</div></div><button id="learningRefresh" class="btn subtle">Refresh</button></div>
+        <div id="learningSummary" class="metric" style="margin-bottom:14px"><div class="metric-label">LEARNING DIGEST</div><div class="metric-value" style="font-size:16px">Loading…</div><div class="metric-foot">Owner-controlled mappings only</div></div>
+        <div class="panel-head"><div><div class="panel-title">Promoted mappings</div><div class="panel-sub">Explicitly taught or owner-approved. Remove individual scopes without deleting other meanings.</div></div></div>
+        <div id="learningAliases" class="list"><div class="empty">Loading owner aliases…</div></div>
+        <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Candidates for approval</div><div class="panel-sub">Repeated successful usage across independent sessions; never promoted silently.</div></div></div>
+        <div id="learningCandidates" class="list"><div class="empty">Loading candidates…</div></div>
+        <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Negative memory</div><div class="panel-sub">Phrases previously corrected away from an action.</div></div></div>
+        <div id="negativeMemory" class="list"><div class="empty">Loading corrections…</div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:20px">
+          <span class="helper">Reset removes all learned aliases, candidates, negative examples, semantic examples, episodes and macros.</span>
+          <button id="resetLearningBtn" class="btn danger">Reset all learning</button>
+        </div>
+        <div id="learningResult" class="result"><strong id="learningResultTitle"></strong><p id="learningResultBody"></p></div>
       </div>
     </section>
     <section id="view-activity" class="view"><div class="panel"><div class="panel-head"><div><div class="panel-title">Recent Activity</div><div class="panel-sub">Local action and decision audit summaries.</div></div><div style="display:flex;gap:8px"><a class="btn subtle" href="/api/v1/agent/audit/export" download="prixon-audit.jsonl">Export JSONL</a><button id="auditRefresh" class="btn subtle">Refresh</button></div></div><div id="auditList" class="activity"><div class="empty">No activity loaded.</div></div></div></section>
@@ -195,6 +213,18 @@ async function refreshRoutines(){
   fillList("routineList",routines,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.name)+'</strong><small>'+esc(item.time_local)+' · '+(item.weekdays||[]).map(n=>["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][n]).join(", ")+'</small></div><div style="display:flex;gap:7px;align-items:center"><span class="badge '+(item.auto_execute?"good":"")+'">'+(item.auto_execute?"L3 auto":"Review first")+'</span><span class="badge">'+(item.enabled?"Enabled":"Paused")+'</span><button class="btn subtle" data-routine-toggle="'+esc(item.id)+'" data-enabled="'+(!item.enabled)+'">'+(item.enabled?"Pause":"Enable")+'</button></div></div>',"No scheduled routines.");
   fillList("routineRunList",runs,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.routine_name||"Routine")+'</strong><small>'+esc(item.due_date)+' · '+esc(item.status)+'</small></div><span class="badge '+(item.status==="completed"?"good":item.status==="failed"||item.status==="interrupted"?"warn":"")+'">'+esc(item.status)+'</span></div>',"No routine runs recorded.");
 }
+async function refreshLearning(){
+  const [state,digest]=await Promise.all([request("/learning"),request("/learning/digest")]);
+  const aliases=state.aliases||[],candidates=digest.ready_for_approval||[],negatives=state.negative_examples||[];
+  $("learningSummary").innerHTML='<div class="metric-label">LEARNING DIGEST</div><div class="metric-value" style="font-size:16px">'+esc(digest.message||"No learning changes waiting for review.")+'</div><div class="metric-foot">'+aliases.length+' promoted mappings · '+candidates.length+' candidates · '+(state.successful_episodes||0)+' successful episodes</div>';
+  fillList("learningAliases",aliases,item=>{
+    const scope=item.scope||{};
+    const scopeText=Object.keys(scope).length?JSON.stringify(scope):"General scope";
+    return '<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' → '+esc(item.target)+'</strong><small>'+esc(item.target_type)+' · '+esc(scopeText)+' · confidence '+Math.round((item.confidence||0)*100)+'%</small></div><button class="btn subtle" data-learning-delete="'+esc(item.phrase)+'" data-learning-scope="'+esc(JSON.stringify(scope))+'">Remove</button></div>';
+  },"No promoted aliases.");
+  fillList("learningCandidates",candidates,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' → '+esc(item.action_name)+'</strong><small>'+Math.round((item.confidence||0)*100)+'% confidence · '+esc(item.independent_sessions)+' independent sessions · '+esc(item.successes)+' successes / '+esc(item.failures)+' failures</small></div><div style="display:flex;gap:6px"><button class="btn primary" data-learning-approve="'+esc(item.phrase)+'" data-learning-action="'+esc(item.action_name)+'">Approve</button><button class="btn subtle" data-learning-reject="'+esc(item.phrase)+'" data-learning-action="'+esc(item.action_name)+'">Reject</button></div></div>',"No candidates currently meet the approval threshold.");
+  fillList("negativeMemory",negatives,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' ↛ '+esc(item.action_name)+'</strong><small>'+esc(item.corrections)+' corrections · penalty '+Math.round((item.penalty||0)*100)+'%</small></div></div>',"No negative examples stored.");
+}
 async function refreshAudit(){
   const items=await request("/audit?limit=30");
   fillList("auditList",items,item=>'<div class="activity-item"><strong>'+esc(item.event_type||"activity")+'</strong><small>'+esc(new Date((item.created_at||0)*1000).toLocaleString())+'</small></div>',"No recent audit activity.");
@@ -213,6 +243,7 @@ function showView(name){
   document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.view===name));
   if(name==="goals"){refreshGoals().catch(e=>console.error(e));refreshRoutines().catch(e=>console.error(e));}
   if(name==="activity")refreshAudit().catch(e=>console.error(e));
+  if(name==="learning")refreshLearning().catch(e=>console.error(e));
   if(name==="command")refreshActions().catch(e=>console.error(e));
 }
 document.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));
@@ -295,6 +326,49 @@ $("routineList").addEventListener("click",async event=>{
   }catch(error){alert(error.message);button.disabled=false;}
 });
 $("auditRefresh").addEventListener("click",()=>refreshAudit());
+
+$("learningRefresh").addEventListener("click",()=>refreshLearning().catch(e=>console.error(e)));
+$("learningAliases").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-learning-delete]");
+  if(!button)return;
+  if(!window.confirm("Remove this owner mapping for the selected context?"))return;
+  button.disabled=true;
+  try{
+    await request("/learning/aliases",{method:"DELETE",body:JSON.stringify({
+      phrase:button.dataset.learningDelete,scope:JSON.parse(button.dataset.learningScope||"{}")
+    })});
+    await refreshLearning();
+  }catch(error){alert(error.message);button.disabled=false;}
+});
+$("learningCandidates").addEventListener("click",async event=>{
+  const approve=event.target.closest("[data-learning-approve]");
+  const reject=event.target.closest("[data-learning-reject]");
+  const button=approve||reject;
+  if(!button)return;
+  const isApprove=!!approve;
+  const verb=isApprove?"approve":"reject";
+  if(!window.confirm((isApprove?"Promote":"Reject")+" this learned mapping?"))return;
+  button.disabled=true;
+  try{
+    await request("/learning/candidates/"+verb,{method:"POST",body:JSON.stringify({
+      phrase:button.dataset[isApprove?"learningApprove":"learningReject"],
+      action_name:button.dataset.learningAction,confirmed:true,scope:{}
+    })});
+    await refreshLearning();
+  }catch(error){alert(error.message);button.disabled=false;}
+});
+$("resetLearningBtn").addEventListener("click",async()=>{
+  if(!window.confirm("Permanently reset all Prixon learning, episodes and macros? This cannot be undone."))return;
+  const button=$("resetLearningBtn");button.disabled=true;
+  try{
+    const result=await request("/learning/reset",{method:"POST",body:JSON.stringify({confirmed:true})});
+    $("learningResult").classList.add("show");
+    $("learningResultTitle").textContent="Learning reset";
+    $("learningResultBody").textContent=JSON.stringify(result);
+    await refreshLearning();
+  }catch(error){alert(error.message);}
+  finally{button.disabled=false;}
+});
 $("killBtn").addEventListener("click",async()=>{try{await request("/kill",{method:"POST",body:"{}"});await refreshAll();}catch(e){alert(e.message);}});
 $("startBtn").addEventListener("click",async()=>{try{await request("/runtime/start",{method:"POST",body:"{}"});await refreshAll();}catch(e){alert(e.message);}});
 refreshAll().catch(e=>{$("statusText").textContent="API unavailable";console.error(e);});
