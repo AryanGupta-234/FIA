@@ -297,7 +297,7 @@
 {"text":"launch","expected_status":"clarify","split":"frozen","case_type":"ambiguous"}
 {"text":"set volume","expected_status":"clarify","split":"frozen","case_type":"ambiguous"}
 {"text":"set the volume","expected_status":"clarify","split":"frozen","case_type":"ambiguous"}
-{"text":"quarantine","expected_status":"unresolved","split":"frozen","case_type":"ambiguous"}
+{"text":"quarantine","expected_status":"clarify","split":"frozen","case_type":"ambiguous"}
 {"text":"do it","expected_status":"unresolved","split":"frozen","case_type":"ambiguous"}
 {"text":"make it bigger","expected_status":"unresolved","split":"frozen","case_type":"ambiguous"}
 {"text":"close","expected_status":"clarify","split":"frozen","case_type":"ambiguous"}
