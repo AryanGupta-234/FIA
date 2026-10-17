@@ -233,7 +233,7 @@ class AgentLoop:
                 "routine_id": routine["id"], "macro_id": routine["macro_id"],
                 "title": routine["name"],
                 "message": f"Your approved routine is scheduled for {routine['time_local']}. Review it before running.",
-            })
+            }, persisted_id=routine["event_id"])
         return len(due)
 
     def _check_battery(self) -> None:
