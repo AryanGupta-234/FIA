@@ -34,3 +34,35 @@
 - [ ] Accessibility, performance and deployment hardening
 
 FIA remains research-only. Purchase and checkout automation are intentionally out of scope.
+
+
+## Prixon — autonomous Windows agent (parallel subsystem)
+
+### P0 — Foundation
+- [x] Isolated `prixon/` package and API router
+- [x] Rules-first intent router and typed action registry
+- [x] Plan schema and deterministic validation
+- [x] L0-L4 risk decision helper
+- [x] Local-only Ollama adapter and health check
+- [x] Initial regression tests
+
+### P1 — Perception and grounding
+- [ ] Windows process/window perception adapter
+- [ ] Installed application entity catalogue
+- [ ] Foreground-window context and short-lived reference resolver
+- [ ] Normalized status queries that bypass the LLM
+
+### P2 — Semantic understanding
+- [ ] Embedding index, retrieval margin and hard negatives
+- [ ] Frozen evaluation dataset and calibrated confidence fusion
+- [ ] Constrained Ollama arbitration on grounded shortlist
+
+### P3 — Safe execution
+- [ ] Plan preconditions and execution budgets
+- [ ] Windows allowlisted adapters, observable verification and retries
+- [ ] Undo journal, append-only audit and kill switch
+
+### P4 — Learning and autonomy
+- [ ] Owner-only synonym/alias learning with Beta confidence and decay
+- [ ] Goal stack, event bus and bounded proactive suggestions
+- [ ] Macro promotion and offline threshold tuning
