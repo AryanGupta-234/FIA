@@ -61,7 +61,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 ### P3 — Safe execution
 - [x] Plan preconditions and execution budgets
 - [x] Windows allowlisted native Win32/URI adapters, tier-2 media/Office/browser-debug adapters, UIA/keyboard fallback, observable verification and retries
-- [x] Undo journal, append-only audit and kill switch
+- [x] Undo journal, append-only audit, nightly JSONL archive rotation/export and kill switch
 
 ### P4 — Learning and autonomy
 - [x] Owner-only synonym/alias learning with Beta confidence and decay
@@ -114,7 +114,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Bounded compound partial recovery resumes only independent unattempted steps under the original deadline; completed and failed steps are never replayed, and dependent steps are surfaced as blocked
 
 #### Phase 6 — Persistent autonomy loop and governance
-- [x] Persistent goal stack, event bus, WinEvent hooks, process/file/battery observers and audit records
+- [x] Persistent goal stack, event bus, WinEvent hooks, process/file/battery observers, periodic privacy-filtered world-state snapshots and rotating/exportable audit records
 - [x] Local-time weekday routine schedules; schedule triggers remain suggestion-only
 - [x] Priority ordering, wall-clock/step/action budgets and loop abort
 - [x] Global Ctrl+Alt+Pause kill switch

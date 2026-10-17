@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from prixon.agent_loop import AgentLoop
 from prixon.governance import decide
@@ -390,6 +391,48 @@ def list_pending_events(limit: int = Query(100, ge=1, le=500)) -> list[dict[str,
 @router.get("/audit")
 def list_audit(limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
     return runtime.store.audit_rows(limit)
+
+
+@router.get("/audit/export")
+def export_audit(
+    after_id: int = Query(0, ge=0),
+    limit: int = Query(10000, ge=1, le=50000),
+) -> Response:
+    rows = runtime.store.audit_export_rows(after_id=after_id, limit=limit)
+    body = "".join(json.dumps(row, ensure_ascii=False, default=str) + "\\n" for row in rows)
+    return Response(
+        content=body,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="prixon-audit.jsonl"'},
+    )
+
+
+@router.get("/audit/archives")
+def list_audit_archives() -> list[dict[str, Any]]:
+    return runtime.store.audit_archives()
+
+
+@router.get("/audit/archives/{filename}")
+def download_audit_archive(filename: str) -> FileResponse:
+    try:
+        path = runtime.store.audit_archive_path(filename)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(
+        path,
+        media_type="application/x-ndjson",
+        filename=path.name,
+    )
+
+
+@router.get("/world-state")
+def get_world_state(limit: int = Query(30, ge=1, le=100)) -> dict[str, Any]:
+    return {
+        "latest": runtime.store.latest_world_state(),
+        "history": runtime.store.world_state_rows(limit),
+    }
 
 
 @router.post("/undo/{undo_id}")

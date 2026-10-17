@@ -15,7 +15,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - L5 deterministic confidence fusion and risk-tier decision gating.
 
 ### Autonomous loop
-- Persistent SQLite world/goal/episode/alias/macro/undo/audit state.
+- Persistent SQLite world/goal/episode/alias/macro/undo/audit state, with bounded privacy-filtered world-state history.
 - WinEvent foreground/window events, process deltas and Downloads completion events.
 - Explicit clipboard metadata and confirmation-gated text reads; clipboard text is excluded from persistent audit/episode records.
 - Explicit-goal continuation and local owner context (time/day/routine state).
@@ -33,7 +33,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - Retry once, then constrained failure reflection/replan, then escalation.
 - Compound failure recovery resumes only independent unattempted steps; completed actions are never replayed and dependent steps are surfaced as blocked.
 - Undo journal and quarantine for user-profile file moves.
-- Append-only audit records.
+- Append-only audit records, nightly JSONL archive rotation, an archive index/download API and one-click active-log export.
 
 ### Learning
 - Multi-session success/failure evidence with decay.
@@ -141,7 +141,8 @@ Core routes:
 - `POST /runtime/stop`
 - `POST /kill`
 - `GET /voice/status`
-- `GET /audit`
+- `GET /audit`, `GET /audit/export`, `GET /audit/archives`, `GET /audit/archives/{filename}`
+- `GET /world-state`
 - `POST /undo/{id}`
 - `GET /macros`
 - learning and proactive feedback routes

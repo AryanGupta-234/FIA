@@ -99,6 +99,7 @@ class AgentLoop:
         self._running = False
         self._last_battery_check = 0.0
         self._last_battery_low = False
+        self._last_world_state_persist = 0.0
         self._suggestions: list[dict[str, Any]] = []
 
     @property
@@ -236,6 +237,45 @@ class AgentLoop:
                 await self.stop(self.runtime.kill_switch.reason)
                 return
             now = time.time()
+            if now - self._last_world_state_persist >= 30:
+                try:
+                    situation = await asyncio.to_thread(self.runtime.situation)
+                    foreground = situation.get("foreground_app") or {}
+                    goals = situation.get("active_goals") or []
+                    compact_state = {
+                        "captured_at": now,
+                        "foreground_app": {
+                            key: foreground.get(key)
+                            for key in ("handle", "pid", "title", "sensitive")
+                            if key in foreground
+                        },
+                        "open_windows": [
+                            {
+                                key: window.get(key)
+                                for key in ("handle", "pid", "process", "title", "minimized", "foreground")
+                                if key in window
+                            }
+                            for window in situation.get("open_windows", [])[:30]
+                        ],
+                        "system": situation.get("system", {}),
+                        "owner_context": situation.get("owner_context", {}),
+                        "active_goals": [
+                            {
+                                "id": goal.get("id"),
+                                "priority": goal.get("priority"),
+                                "status": goal.get("status"),
+                                "source": goal.get("source"),
+                            }
+                            for goal in goals[:20]
+                        ],
+                    }
+                    await asyncio.to_thread(
+                        self.store.save_world_state, compact_state,
+                        source="agent_loop_periodic",
+                    )
+                    self._last_world_state_persist = now
+                except Exception:
+                    logger.exception("World-state persistence failed")
             if now - self._last_battery_check >= 60:
                 self._check_battery()
                 self._last_battery_check = now
@@ -341,10 +381,12 @@ class AgentLoop:
             macro_result = await asyncio.to_thread(
                 MacroPromoter(self.store, self.runtime.registry).consolidate,
             )
+            audit_rotation = await asyncio.to_thread(self.store.rotate_audit, 30)
             self._last_consolidation = now
             self.store.set_setting("learning.last_consolidation", now)
             self.store.audit("nightly_consolidation_finished", {
                 "lexicon": lexicon_result, "macros_proposed": macro_result["count"],
+                "audit_rotation": audit_rotation,
             })
         except Exception:
             logger.exception("Nightly consolidation failed")

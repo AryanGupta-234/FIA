@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +22,8 @@ class AgentStore:
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else default_store_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.audit_archive_dir = self.path.parent / "audit-archive"
+        self._audit_rotation_lock = threading.Lock()
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
@@ -166,6 +170,13 @@ class AgentStore:
                     value_json TEXT NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS world_state (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    captured_at REAL NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'periodic',
+                    snapshot_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_world_state_captured ON world_state(captured_at DESC);
             """)
             undo_columns = {
                 row["name"] for row in db.execute("PRAGMA table_info(undo_journal)").fetchall()
@@ -872,6 +883,155 @@ class AgentStore:
                  "confidence": row["confidence"], "explicit": bool(row["explicit"])}
                 for row in rows
             ]
+
+
+    def save_world_state(
+        self, snapshot: dict[str, Any], *, source: str = "periodic",
+        max_rows: int = 240,
+    ) -> int:
+        """Persist only the caller-supplied privacy-filtered situation summary."""
+        captured_at = float(snapshot.get("captured_at") or time.time())
+        with self.connect() as db:
+            cursor = db.execute(
+                "INSERT INTO world_state(captured_at,source,snapshot_json) VALUES(?,?,?)",
+                (captured_at, str(source)[:40], json.dumps(snapshot, ensure_ascii=False, default=str)),
+            )
+            db.execute(
+                "DELETE FROM world_state WHERE id NOT IN "
+                "(SELECT id FROM world_state ORDER BY captured_at DESC,id DESC LIMIT ?)",
+                (max(1, min(int(max_rows), 2000)),),
+            )
+            return int(cursor.lastrowid)
+
+    def world_state_rows(self, limit: int = 30) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM world_state ORDER BY captured_at DESC,id DESC LIMIT ?",
+                (max(1, min(int(limit), 100)),),
+            ).fetchall()
+            return [
+                {
+                    "id": int(row["id"]),
+                    "captured_at": float(row["captured_at"]),
+                    "source": row["source"],
+                    "snapshot": json.loads(row["snapshot_json"]),
+                }
+                for row in rows
+            ]
+
+    def latest_world_state(self) -> dict[str, Any] | None:
+        rows = self.world_state_rows(1)
+        return rows[0] if rows else None
+
+    def audit_export_rows(
+        self, *, after_id: int = 0, limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM audit_log WHERE id>? ORDER BY id ASC LIMIT ?",
+                (max(0, int(after_id)), max(1, min(int(limit), 50000))),
+            ).fetchall()
+            return [
+                {
+                    "id": int(row["id"]),
+                    "event_type": row["event_type"],
+                    "payload": json.loads(row["payload_json"]),
+                    "created_at": float(row["created_at"]),
+                }
+                for row in rows
+            ]
+
+    def rotate_audit(self, retention_days: int = 30, limit: int = 5000) -> dict[str, Any]:
+        """Atomically archive old append-only audit rows to immutable JSONL batches."""
+        cutoff = time.time() - max(1, min(int(retention_days), 3650)) * 86400
+        batch_limit = max(1, min(int(limit), 20000))
+        with self._audit_rotation_lock:
+            with self.connect() as db:
+                rows = db.execute(
+                    "SELECT * FROM audit_log WHERE created_at<? ORDER BY id ASC LIMIT ?",
+                    (cutoff, batch_limit),
+                ).fetchall()
+            if not rows:
+                return {"archived_rows": 0, "archive_file": None}
+
+            records = [
+                {
+                    "id": int(row["id"]),
+                    "event_type": row["event_type"],
+                    "payload": json.loads(row["payload_json"]),
+                    "created_at": float(row["created_at"]),
+                }
+                for row in rows
+            ]
+            ids = [item["id"] for item in records]
+            filename = f"audit-{ids[0]:012d}-{ids[-1]:012d}.jsonl"
+            self.audit_archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = self.audit_archive_dir / filename
+            serialized = "".join(
+                json.dumps(item, ensure_ascii=False, default=str) + "\n"
+                for item in records
+            )
+
+            if archive_path.exists():
+                existing = archive_path.read_text(encoding="utf-8")
+                existing_ids = [
+                    int(json.loads(line)["id"])
+                    for line in existing.splitlines() if line.strip()
+                ]
+                if existing_ids != ids:
+                    raise RuntimeError("Audit archive filename already exists with different rows.")
+            else:
+                temp_path = self.audit_archive_dir / f".{filename}.{uuid.uuid4().hex}.tmp"
+                try:
+                    with temp_path.open("x", encoding="utf-8", newline="\n") as stream:
+                        stream.write(serialized)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.replace(temp_path, archive_path)
+                finally:
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+            # The archive is durable before active rows are rotated out of SQLite.
+            with self.connect() as db:
+                db.executemany("DELETE FROM audit_log WHERE id=?", [(item_id,) for item_id in ids])
+            return {
+                "archived_rows": len(records),
+                "first_id": ids[0],
+                "last_id": ids[-1],
+                "archive_file": filename,
+            }
+
+    def audit_archives(self) -> list[dict[str, Any]]:
+        if not self.audit_archive_dir.exists():
+            return []
+        records = []
+        for path in sorted(self.audit_archive_dir.glob("audit-*.jsonl")):
+            match = re.fullmatch(r"audit-(\d{12})-(\d{12})\.jsonl", path.name)
+            if not match or not path.is_file():
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            records.append({
+                "filename": path.name,
+                "first_id": int(match.group(1)),
+                "last_id": int(match.group(2)),
+                "size_bytes": int(stat.st_size),
+                "modified_at": float(stat.st_mtime),
+            })
+        return records
+
+    def audit_archive_path(self, filename: str) -> Path:
+        if not re.fullmatch(r"audit-\d{12}-\d{12}\.jsonl", filename):
+            raise ValueError("Invalid audit archive filename.")
+        path = (self.audit_archive_dir / filename).resolve()
+        if path.parent != self.audit_archive_dir.resolve() or not path.is_file():
+            raise FileNotFoundError("Audit archive was not found.")
+        return path
 
     def audit_rows(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connect() as db:
