@@ -25,7 +25,8 @@ from fia.models import (
 from fia.research import create_job, schedule_research
 from fia.schemas import PreferenceUpdate, ResearchRequest, SavedSearchCreate, SavedSearchUpdate
 from fia.services.freshness import price_freshness
-from prixon.api import agent_loop, router as prixon_router
+from prixon.api import agent_loop
+from prixon.api import router as prixon_router
 from prixon.config import PrixonSettings
 
 settings = get_settings()
