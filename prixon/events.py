@@ -202,13 +202,89 @@ class WinEventObserver:
             user32.UnhookWinEvent(hook)
 
 
-class FileSystemEventObserver:
-    """Watches Downloads for completed files; contents are never read."""
+class WinProcessTerminationObserver:
+    """Optional WMI process-stop observer that distinguishes non-zero exits."""
 
     def __init__(self, bus: EventBus) -> None:
         self.bus = bus
-        self._observer = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.available = os.name == "nt"
+
+    def start(self) -> bool:
+        if not self.available:
+            return False
+        try:
+            import pythoncom  # noqa: F401
+            import win32com.client  # noqa: F401
+        except ImportError:
+            return False
+        if self._thread and self._thread.is_alive():
+            return True
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run, name="PrixonProcessTermination", daemon=True,
+        )
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=3)
+            self._thread = None
+
+    @staticmethod
+    def classify_stop(process_name: str, process_id: int, exit_status: int) -> tuple[str, dict[str, Any]]:
+        event_type = "process_crashed" if exit_status != 0 else "process_stopped"
+        return event_type, {
+            "name": process_name[:180],
+            "pid": int(process_id),
+            "exit_status": int(exit_status),
+            "unexpected": exit_status != 0,
+        }
+
+    def _run(self) -> None:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        try:
+            service = win32com.client.GetObject(r"winmgmts:\\.\root\cimv2")
+            watcher = service.ExecNotificationQuery(
+                "SELECT * FROM Win32_ProcessStopTrace"
+            )
+            while not self._stop.is_set():
+                try:
+                    event = watcher.NextEvent(2000)
+                except pythoncom.com_error:
+                    continue
+                try:
+                    payload = self.classify_stop(
+                        str(event.ProcessName),
+                        int(event.ProcessID),
+                        int(event.ExitStatus),
+                    )
+                    self.bus.publish(payload[0], payload[1])
+                except (AttributeError, TypeError, ValueError):
+                    continue
+        except Exception:
+            # WMI is an optional observer; the psutil delta observer remains active.
+            return
+        finally:
+            pythoncom.CoUninitialize()
+
+
+class FileSystemEventObserver:
+    """Watches known user folders for file changes; never reads file contents."""
+
+    WATCHED_FOLDERS = ("Downloads", "Documents", "Desktop")
+
+    def __init__(self, bus: EventBus) -> None:
+        self.bus = bus
+        self._observers: list[Any] = []
         self.available = False
+        self.watched_paths: list[str] = []
 
     def start(self) -> bool:
         if os.name != "nt":
@@ -218,19 +294,40 @@ class FileSystemEventObserver:
             from watchdog.observers import Observer
         except ImportError:
             return False
-        downloads = Path.home() / "Downloads"
-        if not downloads.exists():
+        roots = [
+            Path.home() / name for name in self.WATCHED_FOLDERS
+            if (Path.home() / name).is_dir()
+        ]
+        if not roots:
             return False
         bus = self.bus
 
         class Handler(FileSystemEventHandler):
-            def _stable(self, path_value: str) -> None:
+            def _payload(self, path_value: str) -> dict[str, Any] | None:
                 path = Path(path_value)
+                try:
+                    stat = path.stat()
+                except OSError:
+                    return None
+                return {
+                    "name": path.name[:180],
+                    "path": str(path.resolve()),
+                    "is_directory": path.is_dir(),
+                    "size_bytes": int(stat.st_size) if path.is_file() else None,
+                    "modified_at": float(stat.st_mtime),
+                }
+
+            def _stable_download(self, path_value: str) -> None:
+                path = Path(path_value)
+                if path.suffix.casefold() in {".crdownload", ".part", ".tmp", ".download"}:
+                    return
                 if not path.is_file():
                     return
                 previous = -1
                 stable = 0
                 for _ in range(8):
+                    if not path.exists():
+                        return
                     time.sleep(0.5)
                     try:
                         current = path.stat().st_size
@@ -239,29 +336,61 @@ class FileSystemEventObserver:
                     stable = stable + 1 if current == previous else 0
                     previous = current
                     if stable >= 2:
-                        bus.publish("download_finished", {
-                            "name": path.name[:180], "size_bytes": current,
-                        })
+                        payload = self._payload(str(path))
+                        if payload:
+                            bus.publish("download_finished", payload)
                         return
 
             def on_created(self, event):
-                if not event.is_directory:
-                    threading.Thread(target=self._stable, args=(event.src_path,), daemon=True).start()
+                payload = self._payload(event.src_path)
+                if payload:
+                    bus.publish(
+                        "folder_created" if event.is_directory else "file_created",
+                        payload,
+                    )
+                if not event.is_directory and Path(event.src_path).parent.name.casefold() == "downloads":
+                    threading.Thread(
+                        target=self._stable_download, args=(event.src_path,), daemon=True,
+                    ).start()
+
+            def on_modified(self, event):
+                if event.is_directory:
+                    return
+                payload = self._payload(event.src_path)
+                if payload:
+                    bus.publish("file_modified", payload)
 
             def on_moved(self, event):
-                if not event.is_directory:
-                    threading.Thread(target=self._stable, args=(event.dest_path,), daemon=True).start()
+                payload = self._payload(event.dest_path)
+                if payload:
+                    bus.publish("folder_moved" if event.is_directory else "file_moved", payload)
+                if not event.is_directory and Path(event.dest_path).parent.name.casefold() == "downloads":
+                    threading.Thread(
+                        target=self._stable_download, args=(event.dest_path,), daemon=True,
+                    ).start()
 
-        observer = Observer()
-        observer.schedule(Handler(), str(downloads), recursive=False)
-        observer.start()
-        self._observer = observer
-        self.available = True
-        return True
+            def on_deleted(self, event):
+                path = Path(event.src_path)
+                bus.publish(
+                    "folder_deleted" if event.is_directory else "file_deleted",
+                    {"name": path.name[:180], "path": str(path)},
+                )
+
+        self.stop()
+        for root in roots:
+            observer = Observer()
+            observer.schedule(Handler(), str(root), recursive=True)
+            observer.start()
+            self._observers.append(observer)
+            self.watched_paths.append(str(root))
+        self.available = bool(self._observers)
+        return self.available
 
     def stop(self) -> None:
-        if self._observer:
-            self._observer.stop()
-            self._observer.join(timeout=2)
-            self._observer = None
+        for observer in self._observers:
+            observer.stop()
+        for observer in self._observers:
+            observer.join(timeout=2)
+        self._observers.clear()
+        self.watched_paths.clear()
         self.available = False
