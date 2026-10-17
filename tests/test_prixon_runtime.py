@@ -4,7 +4,12 @@ import time
 
 import pytest
 
-from prixon.confidence import DecisionSignals, fit_logistic_weights, fuse_confidence, meets_risk_threshold
+from prixon.confidence import (
+    DecisionSignals,
+    fit_logistic_weights,
+    fuse_confidence,
+    meets_risk_threshold,
+)
 from prixon.entities import EntityIndex, ReferenceResolver
 from prixon.events import EventBus
 from prixon.executor import ActionExecutor
