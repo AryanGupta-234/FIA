@@ -134,3 +134,62 @@ class WindowsPerception:
 
     def installed_apps(self) -> list[dict[str, str]]:
         return self._installed_apps()
+
+    @staticmethod
+    def known_folders() -> list[dict[str, str]]:
+        roots = [
+            ("Desktop", Path.home() / "Desktop"),
+            ("Documents", Path.home() / "Documents"),
+            ("Downloads", Path.home() / "Downloads"),
+            ("Pictures", Path.home() / "Pictures"),
+        ]
+        return [
+            {"name": name, "target": str(path.resolve())}
+            for name, path in roots if path.is_dir()
+        ]
+
+    @staticmethod
+    def recent_files(limit: int = 100) -> list[dict[str, Any]]:
+        """Index file metadata from bounded known folders; never inspect content."""
+        excluded = {
+            ".git", ".venv", "venv", "node_modules", "__pycache__",
+            "appdata", "temp", "cache", "caches", "$recycle.bin",
+        }
+        results: list[dict[str, Any]] = []
+        inspected = 0
+        max_inspected = max(500, min(5000, limit * 25))
+        for folder_name in ("Downloads", "Documents", "Desktop"):
+            root = Path.home() / folder_name
+            if not root.is_dir():
+                continue
+            for current, directories, files in os.walk(root):
+                directories[:] = [
+                    item for item in directories if item.casefold() not in excluded
+                ][:50]
+                depth = len(Path(current).relative_to(root).parts)
+                if depth >= 3:
+                    directories[:] = []
+                for filename in files:
+                    path = Path(current) / filename
+                    try:
+                        stat = path.stat()
+                    except OSError:
+                        continue
+                    if not path.is_file():
+                        continue
+                    results.append({
+                        "name": path.name,
+                        "target": str(path.resolve()),
+                        "modified_at": float(stat.st_mtime),
+                        "size_bytes": int(stat.st_size),
+                        "folder": folder_name,
+                    })
+                    inspected += 1
+                    if inspected >= max_inspected:
+                        break
+                if inspected >= max_inspected:
+                    break
+            if inspected >= max_inspected:
+                break
+        results.sort(key=lambda item: item["modified_at"], reverse=True)
+        return results[:max(1, min(limit, 500))]
