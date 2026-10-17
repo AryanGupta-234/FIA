@@ -167,3 +167,9 @@ class RoutineCreateRequest(BaseModel):
 
 class RoutineStatusRequest(BaseModel):
     enabled: bool
+
+
+class LearningCandidateRequest(BaseModel):
+    phrase: str = Field(min_length=2, max_length=100)
+    action_name: str = Field(min_length=2, max_length=100)
+    confirmed: bool = False
