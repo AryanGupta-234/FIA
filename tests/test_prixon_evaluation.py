@@ -5,19 +5,25 @@ from prixon.registry import ActionRegistry
 from prixon.router import IntentRouter
 
 
-def test_frozen_dataset_has_several_hundred_examples():
+def test_frozen_dataset_has_several_hundred_diverse_examples():
     rows = load_dataset(Path(__file__).parent / "data" / "prixon_eval.jsonl")
-    assert len(rows) >= 200
+    assert len(rows) >= 300
+    assert {row.get("case_type") for row in rows} >= {
+        "clean", "noisy", "pronoun", "compound", "ambiguous", "adversarial", "lookalike",
+    }
     report = evaluate_rows(rows, IntentRouter(ActionRegistry()))
-    assert report["action_accuracy"] >= 0.80
+    assert report["action_and_status_accuracy"] >= 0.80
     assert report["frozen_total"] > 0
+    assert report["per_case_type"]["ambiguous"]["accuracy"] >= 0.80
 
 
-def test_evaluation_reports_class_confusions():
+def test_evaluation_reports_routing_class_and_clarification_metrics():
     rows = [
-        {"text": "show system health", "expected_action": "system.status"},
-        {"text": "list running processes", "expected_action": "process.list"},
+        {"text": "show system health", "expected_action": "system.status", "case_type": "clean"},
+        {"text": "open", "expected_status": "clarify", "case_type": "ambiguous"},
     ]
     report = evaluate_rows(rows)
     assert report["total"] == 2
     assert report["correct"] == 2
+    assert "query" in report["per_intent_class"]
+    assert report["clarification_rate"] == 0.5
