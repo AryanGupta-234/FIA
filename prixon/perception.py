@@ -143,10 +143,19 @@ class WindowsPerception:
             ("Downloads", Path.home() / "Downloads"),
             ("Pictures", Path.home() / "Pictures"),
         ]
-        return [
-            {"name": name, "target": str(path.resolve())}
-            for name, path in roots if path.is_dir()
-        ]
+        known: list[dict[str, str]] = []
+        home = Path.home().resolve()
+        for name, path in roots:
+            try:
+                if path.is_symlink() or not path.is_dir():
+                    continue
+                resolved = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            if resolved != home and home not in resolved.parents:
+                continue
+            known.append({"name": name, "target": str(resolved)})
+        return known
 
     @staticmethod
     def recent_files(limit: int = 100) -> list[dict[str, Any]]:
@@ -172,14 +181,21 @@ class WindowsPerception:
                 for filename in files:
                     path = Path(current) / filename
                     try:
-                        stat = path.stat()
-                    except OSError:
+                        if path.is_symlink():
+                            continue
+                        resolved = path.resolve(strict=True)
+                        stat = resolved.stat()
+                    except (OSError, RuntimeError):
                         continue
-                    if not path.is_file():
+                    home = Path.home().resolve()
+                    if (
+                        not resolved.is_file()
+                        or (resolved != home and home not in resolved.parents)
+                    ):
                         continue
                     results.append({
-                        "name": path.name,
-                        "target": str(path.resolve()),
+                        "name": resolved.name,
+                        "target": str(resolved),
                         "modified_at": float(stat.st_mtime),
                         "size_bytes": int(stat.st_size),
                         "folder": folder_name,
