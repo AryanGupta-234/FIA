@@ -6,6 +6,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 import psutil
@@ -37,7 +38,6 @@ class EventBus:
             try:
                 callback(event)
             except Exception:
-                # A failing observer must not prevent delivery to other subscribers.
                 continue
         return event
 
@@ -53,10 +53,7 @@ class EventBus:
 
 
 class ProcessDeltaObserver:
-    """Bounded fallback observer for process start/stop events.
-
-    Window and object create/destroy hooks are supplied by WinEventObserver on Windows.
-    """
+    """Bounded process-start/stop fallback observer using lightweight psutil snapshots."""
 
     def __init__(self, bus: EventBus, interval_seconds: float = 2.0) -> None:
         self.bus = bus
@@ -69,7 +66,7 @@ class ProcessDeltaObserver:
         if self._running:
             return
         self._running = True
-        self._previous = self._snapshot()
+        self._previous = await asyncio.to_thread(self._snapshot)
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -183,3 +180,68 @@ class WinEventObserver:
             user32.DispatchMessageW(ctypes.byref(message))
         for hook in hooks:
             user32.UnhookWinEvent(hook)
+
+
+class FileSystemEventObserver:
+    """Watches Downloads for completed files; contents are never read."""
+
+    def __init__(self, bus: EventBus) -> None:
+        self.bus = bus
+        self._observer = None
+        self.available = False
+
+    def start(self) -> bool:
+        if os.name != "nt":
+            return False
+        try:
+            from watchdog.events import FileSystemEventHandler
+            from watchdog.observers import Observer
+        except ImportError:
+            return False
+        downloads = Path.home() / "Downloads"
+        if not downloads.exists():
+            return False
+        bus = self.bus
+
+        class Handler(FileSystemEventHandler):
+            def _stable(self, path_value: str) -> None:
+                path = Path(path_value)
+                if not path.is_file():
+                    return
+                previous = -1
+                stable = 0
+                for _ in range(8):
+                    time.sleep(0.5)
+                    try:
+                        current = path.stat().st_size
+                    except OSError:
+                        return
+                    stable = stable + 1 if current == previous else 0
+                    previous = current
+                    if stable >= 2:
+                        bus.publish("download_finished", {
+                            "name": path.name[:180], "size_bytes": current,
+                        })
+                        return
+
+            def on_created(self, event):
+                if not event.is_directory:
+                    threading.Thread(target=self._stable, args=(event.src_path,), daemon=True).start()
+
+            def on_moved(self, event):
+                if not event.is_directory:
+                    threading.Thread(target=self._stable, args=(event.dest_path,), daemon=True).start()
+
+        observer = Observer()
+        observer.schedule(Handler(), str(downloads), recursive=False)
+        observer.start()
+        self._observer = observer
+        self.available = True
+        return True
+
+    def stop(self) -> None:
+        if self._observer:
+            self._observer.stop()
+            self._observer.join(timeout=2)
+            self._observer = None
+        self.available = False
