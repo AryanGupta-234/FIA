@@ -24,13 +24,17 @@ class MacroPromoter:
         for index, step in enumerate(plan.get("steps", [])):
             action = self.registry.get(step.get("tool", ""))
             args = dict(step.get("args") or {})
-            safe_args = {key: value for key, value in args.items() if key in self.PARAMETER_KEYS}
+            safe_args = {
+                key: f"$input.{key}" for key in args if key in self.PARAMETER_KEYS
+            }
+            dependencies = step.get("depends_on", [])
             if action and action.target_type == "window" and index > 0:
                 safe_args = {"window": "$previous.window", "hwnd": "$previous.hwnd"}
+                dependencies = sorted(set(dependencies + [index - 1]))
             steps.append({
                 "tool": step["tool"],
                 "args": safe_args,
-                "depends_on": step.get("depends_on", []),
+                "depends_on": dependencies,
                 "expected_outcome": step.get("expected_outcome", "verified"),
             })
         return {"goal": plan.get("goal", "Approved personal routine"), "steps": steps}
@@ -64,10 +68,12 @@ class MacroPromoter:
             first_tool = latest["plan"].get("steps", [{}])[0].get("tool", "routine")
             name = f"Routine {first_tool.replace('.', ' ').title()}"
             template = self._template(latest["plan"])
-            # Save each independent successful occurrence as evidence for the promotion threshold.
-            for episode in episodes:
+            # Store the occurrence count once per consolidation run; repeated runs do not inflate trust.
+            triggers = sorted({item["utterance"] for item in episodes})
+            for trigger in triggers[:12]:
                 self.store.record_macro(
-                    digest, name, template, episode["utterance"], approved=False,
+                    digest, name, template, trigger, approved=False,
+                    evidence_count=len(episodes) if trigger == triggers[0] else 0,
                 )
             proposed.append({
                 "shape_hash": digest, "name": name, "successes": len(episodes),
