@@ -344,11 +344,11 @@ class WindowsActionAdapters:
             self._validate_launch_target(target)
             before_pids = set(psutil.pids())
             os.startfile(target)  # type: ignore[attr-defined]
-            time.sleep(0.5)
             selected_pid = None
+            selected_window = None
             app_name = str(args.get("application") or "").casefold()
             process_hints = {
-                "paint": ("mspaint.exe",),
+                "paint": ("mspaint.exe", "paintapp.exe"),
                 "calculator": ("calculatorapp.exe", "calc.exe"),
                 "microsoft edge": ("msedge.exe",),
                 "edge": ("msedge.exe",),
@@ -361,38 +361,48 @@ class WindowsActionAdapters:
                 "discord": ("discord.exe",),
             }
             hints = process_hints.get(app_name, (app_name.split()[0] + ".exe",))
-            foreground = None
             deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline and selected_pid is None:
-                foreground = self.perception._foreground_window()
+            while time.monotonic() < deadline:
+                visible_windows = self.perception.open_windows(limit=100)
+                matches = [
+                    item for item in visible_windows
+                    if not item.get("sensitive")
+                    and item.get("pid")
+                    and any(
+                        hint in str(item.get("process") or "").casefold()
+                        for hint in hints
+                    )
+                ]
+                foreground_window = next(
+                    (item for item in matches if item.get("foreground")),
+                    None,
+                )
+                selected_window = foreground_window or (matches[0] if matches else None)
+                if selected_window:
+                    selected_pid = int(selected_window["pid"])
+                    break
+
+                # A process may be ready before its top-level window is created.
                 candidates = sorted(set(psutil.pids()) - before_pids)
                 for pid in candidates:
                     try:
                         process_name = psutil.Process(pid).name().casefold()
-                        if any(hint in process_name for hint in hints):
-                            selected_pid = pid
-                            break
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue
-                if (
-                    selected_pid is None and foreground and not foreground.get("sensitive")
-                    and foreground.get("pid")
-                ):
-                    try:
-                        foreground_name = psutil.Process(int(foreground["pid"])).name().casefold()
-                        if any(hint in foreground_name for hint in hints):
-                            selected_pid = int(foreground["pid"])
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                if selected_pid is None:
-                    time.sleep(0.2)
-            if foreground and foreground.get("sensitive"):
-                foreground = None
+                    if any(hint in process_name for hint in hints):
+                        selected_pid = int(pid)
+                        break
+                if selected_pid is not None and not psutil.pid_exists(selected_pid):
+                    selected_pid = None
+                time.sleep(0.1)
+
             return {
-                "launched": target, "application": args.get("application"),
+                "launched": target,
+                "application": args.get("application"),
                 "pid": selected_pid,
-                "hwnd": foreground.get("handle") if foreground and not foreground.get("sensitive") and selected_pid and foreground.get("pid") == selected_pid else None,
-                "window": foreground.get("title") if foreground and not foreground.get("sensitive") and selected_pid and foreground.get("pid") == selected_pid else None,
+                "hwnd": selected_window.get("handle") if selected_window else None,
+                "window": selected_window.get("title") if selected_window else None,
+                "window_ready": selected_window is not None,
             }
         if action in {"window.minimize", "window.maximize", "window.restore"}:
             self._require_windows()
