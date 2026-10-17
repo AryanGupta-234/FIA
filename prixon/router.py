@@ -9,27 +9,36 @@ from prixon.schemas import Candidate, IntentClass, RouteResult, RiskTier
 def normalize(text: str) -> str:
     value = text.casefold().strip()
     value = re.sub(r"[^\w\s%.-]", " ", value)
-    value = re.sub(r"\s+", " ", value)
-    return value
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def classify(text: str) -> IntentClass:
     value = normalize(text)
-    if any(word in value for word in ("delete", "move", "rename", "quarantine", "copy")):
+    if any(term in value for term in (
+        "quarantine", "delete file", "move file", "rename file", "copy file",
+    )):
         return IntentClass.FILE_OPERATION
-    if any(word in value for word in ("volume", "brightness", "wifi", "bluetooth", "setting")):
+    if any(term in value for term in (
+        "volume", "brightness", "wifi", "wi-fi", "bluetooth", "settings",
+        "setting", "night light", "focus assist",
+    )):
         return IntentClass.SYSTEM_SETTING
-    if any(word in value for word in ("open ", "launch ", "start ", "fire up ")):
+    if re.search(r"\b(open|launch|start|fire up)\b", value):
         return IntentClass.LAUNCH
-    if any(word in value for word in ("minimize", "maximize", "close window", "restore window")):
+    if any(term in value for term in (
+        "minimize", "maximize", "restore", "unminimize", "close window", "close it",
+    )) or re.match(r"^close\s+", value):
         return IntentClass.CONTROL
-    if any(word in value for word in ("list ", "show ", "what ", "how ", "is ", "check ")):
+    if any(term in value for term in (
+        "list ", "show ", "what ", "how ", "is ", "check ", "tell me ",
+        "whether ", "do i have ", "remaining charge", "battery percentage",
+    )) or " running" in value or " active" in value:
         return IntentClass.QUERY
     return IntentClass.CHAT
 
 
 class IntentRouter:
-    """Rules-first retrieval. Embedding/LLM arbitration is intentionally a later layer."""
+    """Rules-first registry retrieval with class filters and explicit hard negatives."""
 
     def __init__(self, registry: ActionRegistry | None = None) -> None:
         self.registry = registry or ActionRegistry()
@@ -45,6 +54,8 @@ class IntentRouter:
 
         candidates: list[Candidate] = []
         for action in self.registry.by_class(intent_class):
+            if any(normalize(negative) == normalized for negative in action.hard_negatives):
+                continue
             phrases = (action.name.replace(".", " "), *action.examples)
             best = max((self._phrase_score(normalized, phrase) for phrase in phrases), default=0)
             if best > 0:
@@ -59,17 +70,16 @@ class IntentRouter:
 
         best = candidates[0]
         margin = best.score - (candidates[1].score if len(candidates) > 1 else 0)
-        required_slots_present = self._has_required_slots(normalized, best.action.required_slots)
         if best.score < 0.42 or (len(candidates) > 1 and margin < 0.08):
             return RouteResult(
                 status="clarify", normalized_text=normalized, intent_class=intent_class,
                 candidates=candidates[:5], confidence=best.score,
                 reason="low_match_or_ambiguous",
                 clarification="Did you mean " + " or ".join(
-                    c.action.description.lower() for c in candidates[:2]
+                    candidate.action.description.lower() for candidate in candidates[:2]
                 ) + "?",
             )
-        if not required_slots_present:
+        if not self._has_required_slots(normalized, best.action.required_slots):
             return RouteResult(
                 status="clarify", normalized_text=normalized, intent_class=intent_class,
                 candidates=candidates[:5], confidence=best.score,
@@ -87,7 +97,7 @@ class IntentRouter:
     def _phrase_score(text: str, phrase: str) -> float:
         target = normalize(phrase)
         if not target:
-            return 0
+            return 0.0
         if text == target:
             return 1.0
         if target in text:
@@ -95,20 +105,27 @@ class IntentRouter:
         tokens = set(target.split())
         words = set(text.split())
         if not tokens:
-            return 0
-        overlap = len(tokens & words) / len(tokens)
-        return round(overlap * 0.78, 4)
+            return 0.0
+        return round((len(tokens & words) / len(tokens)) * 0.78, 4)
 
     @staticmethod
     def _has_required_slots(text: str, slots: tuple[str, ...]) -> bool:
         if not slots:
             return True
         if "application" in slots:
-            return bool(re.search(r"\b(open|launch|start|fire up)\s+\w+", text))
+            return bool(
+                re.search(r"\b(open|launch|start|fire up)\s+\w+", text)
+                or re.search(r"\b(?:is|check if|whether)\s+\w+\s+(?:running|open|active)", text)
+            )
         if "level" in slots:
             return bool(re.search(r"\b\d{1,3}\s*%?\b", text))
         if "window" in slots:
-            return any(word in text for word in ("this window", "foreground", "notepad", "chrome"))
+            return any(word in text for word in ("this window", "current window", "foreground", " it", "that"))
+        if "setting" in slots:
+            return any(term in text for term in (
+                "display", "screen", "sound", "audio", "wifi", "wi-fi",
+                "bluetooth", "battery", "night light", "focus", "network",
+            ))
         if "file" in slots:
             return any(token in text for token in ("file", "document", "this one", "selected"))
         return False
