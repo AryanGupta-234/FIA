@@ -681,7 +681,7 @@ class AgentRuntime:
             previous = " ".join(pending["phrase"].casefold().split())
             similarity = SequenceMatcher(None, previous, normalized).ratio()
             is_correction = normalized.startswith(("no ", "not ", "stop ", "undo "))
-            if is_correction or similarity >= 0.45:
+            if is_correction or (previous != normalized and similarity >= 0.45):
                 discarded += self.store.discard_pending_learning(signal_id=pending["id"])
                 if is_correction:
                     self.store.add_negative_example(pending["phrase"], pending["action_name"])
