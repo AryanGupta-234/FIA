@@ -118,20 +118,21 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Local-time weekday schedules; suggestion-only by default, with owner-confirmed L3 execution for eligible safe approved macros and once-per-date run claims
 - [x] Priority ordering, wall-clock/step/action budgets and loop abort
 - [x] Global Ctrl+Alt+Pause kill switch
-- [x] Proactive suggestions are suppressed in focus/fullscreen and are suggestion-only
-- [x] Push-to-listen local Vosk voice kill via Ctrl+Alt+V; fixed phrase grammar only, finite capture window and no audio/transcript persistence
+- [x] Proactive notifications are suppressed in focus/fullscreen and remain suggestion-only; a local model may veto/refine one rule-generated candidate but cannot initiate an action
+- [x] Optional finite push-to-listen Vosk voice kill (Ctrl+Alt+V) and normal voice commands (Ctrl+Alt+M) through the typed, risk-gated request path; no continuously open microphone or audio/transcript persistence
 
 #### Phase 7 — Evolving language and owner learning
 - [x] Explicit alias teaching, corrections, negative memory and contextual entity aliases
 - [x] Beta-prior confidence, multi-session promotion candidates, demotion and 60-day half-life
 - [x] Delayed weak success signal; correction/undo window; owner inspect/delete/reset controls
+- [x] Owner decision-review queue records explicit correct/incorrect intent labels separately from technical execution success
 - [x] Nightly learning digest with confirmation-gated approve/reject API
 - [x] Incremental, persistent embedding example growth with cosine deduplication/cap
 
 #### Phase 8 — Proactivity, macros and calibration
 - [x] Trigger cooldowns, annoyance score, accepted/dismissed feedback and interruption cap
 - [x] Repeated plan-shape grouping, parameterized macro proposals and explicit approval/revocation
-- [x] Offline logistic confidence-weight fitting helper
+- [x] Offline logistic confidence-weight and per-risk threshold proposal from owner-reviewed labels, with an inactive-by-default activation gate requiring owner confirmation and a frozen-set non-regression attestation
 - [ ] Compare frozen-set wrong-execution before/after on the Windows target environment; only then allow the owner to activate calibrated weights/thresholds
 
 #### Phase 9 — Optional research extensions
