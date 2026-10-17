@@ -219,6 +219,89 @@ def test_plan_validator_rejects_unknown_parameters_and_bad_references():
     assert any(error.startswith("previous_reference_without_dependency") for error in result.errors)
 
 
+def test_partial_recovery_resumes_only_steps_independent_of_failure():
+    from prixon.recovery import build_partial_recovery_plan
+
+    original = AgentPlan(
+        goal="Inspect telemetry, then control a window",
+        steps=[
+            PlanStep(tool="system.status", args={}, expected_outcome="status", confidence=0.9),
+            PlanStep(
+                tool="window.maximize",
+                args={"window": "Editor", "hwnd": 123},
+                expected_outcome="window_is_maximized", confidence=0.9,
+            ),
+            PlanStep(tool="system.battery", args={}, expected_outcome="battery", confidence=0.9),
+            PlanStep(
+                tool="system.memory", args={}, depends_on=[1],
+                expected_outcome="memory", confidence=0.9,
+            ),
+            PlanStep(
+                tool="system.cpu", args={}, depends_on=[2],
+                expected_outcome="cpu", confidence=0.9,
+            ),
+        ],
+    )
+    execution = {
+        "status": "failed",
+        "steps": [
+            {"index": 0, "success": True, "output": {"ok": True}},
+            {"index": 1, "success": False, "output": {}, "error": "window_not_found"},
+        ],
+    }
+    recovery = build_partial_recovery_plan(original, execution)
+    assert recovery.plan is not None
+    assert recovery.failed_index == 1
+    assert recovery.resumed_indices == (2, 4)
+    assert recovery.blocked_indices == (3,)
+    assert [step.tool for step in recovery.plan.steps] == ["system.battery", "system.cpu"]
+    assert recovery.plan.steps[0].depends_on == []
+    assert recovery.plan.steps[1].depends_on == [0]
+
+
+def test_partial_recovery_blocks_previous_reference_after_failed_step():
+    from prixon.recovery import build_partial_recovery_plan
+
+    original = AgentPlan(
+        goal="Launch an app, inspect memory, then maximize that window",
+        steps=[
+            PlanStep(
+                tool="app.launch",
+                args={
+                    "application": "Calculator",
+                    "application_target": r"C:\\ProgramData\\Start Menu\\Calculator.lnk",
+                },
+                expected_outcome="target_process_started", confidence=0.9,
+            ),
+            PlanStep(tool="system.memory", args={}, expected_outcome="memory", confidence=0.9),
+            PlanStep(
+                tool="window.maximize",
+                args={"window": "$previous.window", "hwnd": "$previous.hwnd"},
+                depends_on=[1],
+                expected_outcome="window_is_maximized", confidence=0.9,
+            ),
+            PlanStep(
+                tool="system.cpu", args={}, expected_outcome="cpu", confidence=0.9,
+            ),
+        ],
+    )
+    execution = {
+        "status": "failed",
+        "steps": [
+            {
+                "index": 0, "success": True,
+                "output": {"window": "Calculator", "hwnd": 9876},
+            },
+            {"index": 1, "success": False, "output": {}, "error": "telemetry_failed"},
+        ],
+    }
+    recovery = build_partial_recovery_plan(original, execution)
+    assert recovery.plan is not None
+    assert recovery.resumed_indices == (3,)
+    assert recovery.blocked_indices == (2,)
+    assert recovery.plan.steps[0].tool == "system.cpu"
+
+
 def test_macro_evidence_is_idempotent_across_consolidation_runs(store):
     plan = {"goal": "routine", "steps": [{"tool": "system.status", "args": {}}]}
     store.record_macro("shape", "Routine", plan, "check my pc", evidence_count=4)

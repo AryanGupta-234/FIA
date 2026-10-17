@@ -22,6 +22,7 @@ from prixon.ollama import OllamaClient
 from prixon.perception import WindowsPerception
 from prixon.planner import validate_plan
 from prixon.proactive import ProactiveEngine
+from prixon.recovery import build_partial_recovery_plan
 from prixon.registry import ActionRegistry
 from prixon.router import IntentRouter
 from prixon.schemas import (
@@ -786,9 +787,64 @@ class AgentRuntime:
                     "validation": validation.model_dump()}
         if any(self.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM for step in plan.steps) and not confirmed:
             return {"status": "confirmation_required", "plan": plan.model_dump(mode="json")}
-        result = self.executor.execute_plan(plan, confirmed=confirmed)
+        deadline = time.monotonic() + self.executor.budget.wall_clock_seconds
+        result = self.executor.execute_plan(
+            plan, confirmed=confirmed, session_id=session_id,
+            deadline_monotonic=deadline,
+        )
+        if result.get("status") == "failed" and self.executor.budget.max_replans > 0:
+            recovery = build_partial_recovery_plan(plan, result)
+            recovery_payload = {
+                "performed": recovery.plan is not None,
+                "failed_step_index": recovery.failed_index,
+                "resumed_step_indices": list(recovery.resumed_indices),
+                "blocked_step_indices": list(recovery.blocked_indices),
+                "reason": recovery.reason,
+            }
+            self.store.audit("compound_partial_recovery_planned", {
+                "goal": original, **recovery_payload,
+            })
+            if recovery.plan is not None:
+                resumed = self.executor.execute_plan(
+                    recovery.plan, confirmed=confirmed, session_id=session_id,
+                    deadline_monotonic=deadline,
+                )
+                resumed_steps = []
+                for item in resumed.get("steps", []):
+                    mapped = dict(item)
+                    local_index = int(mapped.get("index", -1))
+                    if 0 <= local_index < len(recovery.resumed_indices):
+                        mapped["index"] = recovery.resumed_indices[local_index]
+                        mapped["recovery_attempt"] = True
+                    resumed_steps.append(mapped)
+                recovery_payload["execution_status"] = resumed.get("status")
+                recovery_payload["execution_reason"] = resumed.get("reason")
+                recovery_payload["execution"] = resumed
+                result = {
+                    "status": (
+                        "partially_recovered"
+                        if resumed.get("status") == "completed"
+                        else "partial_recovery_failed"
+                    ),
+                    "reason": "one_compound_step_failed",
+                    "failed_step_index": recovery.failed_index,
+                    "steps": list(result.get("steps", [])) + resumed_steps,
+                    "recovery": recovery_payload,
+                }
+            else:
+                result = {
+                    **result,
+                    "status": "partial_failure",
+                    "recovery": recovery_payload,
+                }
+            self.store.audit("compound_partial_recovery_finished", {
+                "goal": original, "result": result,
+            })
         outcome = "success" if result["status"] == "completed" else "failure"
-        self.store.episode(original, ["L3", "L4", "L5"], plan.model_dump(mode="json"), outcome, result.get("reason"))
+        self.store.episode(
+            original, ["L3", "L4", "L5", "partial_recovery"],
+            plan.model_dump(mode="json"), outcome, result.get("reason"),
+        )
         return {"status": result["status"], "execution": result, "plan": plan.model_dump(mode="json")}
 
 

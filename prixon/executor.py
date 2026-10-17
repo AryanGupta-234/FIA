@@ -600,8 +600,10 @@ class ActionExecutor:
     def execute_plan(
         self, plan: AgentPlan, *, confirmed: bool = False,
         session_id: str = "local-session",
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         started = time.monotonic()
+        deadline = deadline_monotonic or (started + self.budget.wall_clock_seconds)
         self._seen_steps.clear()
         from prixon.planner import validate_plan
         validation = validate_plan(plan, self.registry, self.budget.max_steps)
@@ -623,7 +625,7 @@ class ActionExecutor:
         for index, step in enumerate(plan.steps):
             if self.kill_switch and self.kill_switch.active:
                 return {"status": "aborted", "reason": "kill_switch_active", "steps": results}
-            if time.monotonic() - started > self.budget.wall_clock_seconds:
+            if time.monotonic() >= deadline:
                 return {"status": "aborted", "reason": "wall_clock_budget_exceeded", "steps": results}
             if any(not results[dep].get("success") for dep in step.depends_on):
                 return {"status": "blocked", "reason": "dependency_failed", "steps": results}
