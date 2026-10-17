@@ -59,13 +59,11 @@ class MacroPromoter:
 
     def consolidate(self) -> dict[str, Any]:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        shapes: dict[str, dict[str, Any]] = {}
         for episode in self.store.successful_episodes():
             shape = self._shape(episode["plan"])
             encoded = json.dumps(shape, sort_keys=True, separators=(",", ":"))
             digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20]
             groups[digest].append(episode)
-            shapes[digest] = shape
         proposed = []
         for digest, episodes in groups.items():
             if len(episodes) < self.minimum_successes:
