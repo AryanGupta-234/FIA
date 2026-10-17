@@ -40,6 +40,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 
 ### P0 — Foundation
 - [x] Isolated `prixon/` package and API router
+- [x] Local web control panel, one-command launcher, per-user sign-in startup task and uninstall script
 - [x] Rules-first intent router and typed action registry
 - [x] Plan schema and deterministic validation
 - [x] L0-L4 risk decision helper

@@ -146,6 +146,30 @@ Core routes:
 - `GET /macros`
 - learning and proactive feedback routes
 
+## Windows prototype setup
+
+From the repository root in PowerShell:
+
+~~~powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[windows,media,browser,voice]"
+Copy-Item .env.example .env -ErrorAction SilentlyContinue
+.\scripts\open-prixon.ps1
+~~~
+
+The UI opens at `http://127.0.0.1:8000/api/v1/agent/ui` unless `API_PORT` is changed in `.env`.
+
+To launch Prixon automatically at Windows sign-in, run:
+
+~~~powershell
+.\scripts\install-prixon-startup.ps1
+~~~
+
+Remove automatic startup with `.scripts\uninstall-prixon-startup.ps1`. Server logs are written under `%LOCALAPPDATA%\Prixon\logs`. The task runs as the signed-in user without administrator elevation or a stored password.
+
+Semantic retrieval is optional. Install `.[semantic]` separately and set `PRIXON_SEMANTIC_ENABLED=true` only when you want to load the local BGE model.
+
 ## Run
 
 ~~~powershell
