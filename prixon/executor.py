@@ -17,6 +17,7 @@ from prixon.perception import WindowsPerception
 from prixon.registry import ActionRegistry
 from prixon.schemas import AgentPlan, RiskTier
 from prixon.store import AgentStore
+from prixon.verifier import compare_expected
 
 
 @dataclass
@@ -26,6 +27,7 @@ class ExecutionBudget:
     wall_clock_seconds: float = 60.0
     max_model_tokens: int = 1024
     step_timeout_seconds: float = 12.0
+    max_actions_per_minute: int = 20
     max_actions_per_minute: int = 30
 
 
@@ -453,6 +455,7 @@ class ActionExecutor:
         self.budget = budget or ExecutionBudget()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PrixonAction")
         self._seen_steps: dict[str, int] = {}
+        self._action_times: list[float] = []
         self._action_times: deque[float] = deque()
 
     def execute_action(
@@ -465,6 +468,10 @@ class ActionExecutor:
             return ActionResult(False, action_name, error="unknown_action")
         if self.kill_switch and self.kill_switch.active:
             return ActionResult(False, action_name, error="kill_switch_active")
+        now = time.monotonic()
+        self._action_times = [stamp for stamp in self._action_times if now - stamp < 60]
+        if len(self._action_times) >= self.budget.max_actions_per_minute:
+            return ActionResult(False, action_name, error="action_rate_limit_exceeded")
         now = time.monotonic()
         while self._action_times and now - self._action_times[0] >= 60:
             self._action_times.popleft()
@@ -653,6 +660,9 @@ class ActionExecutor:
                 "output": action_result.output, "error": action_result.error,
                 "undo_id": action_result.undo_id,
                 "expected_outcome": step.expected_outcome,
+                "prediction_error": (
+                    0.0 if action_result.verified else 1.0
+                ),
             }
             results.append(item)
             if not action_result.success:
