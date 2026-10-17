@@ -120,7 +120,7 @@ def default_actions() -> list[ActionSpec]:
             required_slots=("window",),
             parameter_schema={"window": "entity:window", "hwnd": "integer:window_handle"},
             preconditions=("window_exists",), postconditions=("window_is_minimized",),
-            risk=RiskTier.REVERSIBLE, undo_supported=True, automation_tiers=("win32",),
+            risk=RiskTier.REVERSIBLE, undo_supported=True, automation_tiers=("native_api", "ui_automation", "keyboard"),
         ),
         ActionSpec(
             name="window.maximize", description="Maximize the grounded foreground window.",
@@ -129,7 +129,7 @@ def default_actions() -> list[ActionSpec]:
             required_slots=("window",),
             parameter_schema={"window": "entity:window", "hwnd": "integer:window_handle"},
             preconditions=("window_exists",), postconditions=("window_is_maximized",),
-            risk=RiskTier.REVERSIBLE, undo_supported=True, automation_tiers=("win32",),
+            risk=RiskTier.REVERSIBLE, undo_supported=True, automation_tiers=("native_api", "ui_automation", "keyboard"),
         ),
         ActionSpec(
             name="window.restore", description="Restore the grounded foreground window.",
@@ -138,7 +138,7 @@ def default_actions() -> list[ActionSpec]:
             required_slots=("window",),
             parameter_schema={"window": "entity:window", "hwnd": "integer:window_handle"},
             preconditions=("window_exists",), postconditions=("window_is_restored",),
-            risk=RiskTier.REVERSIBLE, undo_supported=True, automation_tiers=("win32",),
+            risk=RiskTier.REVERSIBLE, undo_supported=True, automation_tiers=("native_api", "ui_automation", "keyboard"),
         ),
         ActionSpec(
             name="window.close", description="Send a graceful close request to the grounded foreground window.",
@@ -148,7 +148,7 @@ def default_actions() -> list[ActionSpec]:
             parameter_schema={"window": "entity:window", "hwnd": "integer:window_handle"},
             preconditions=("window_exists", "owner_confirmed"),
             postconditions=("window_closed_or_close_prompt_shown",),
-            risk=RiskTier.ALWAYS_CONFIRM, undo_supported=False, automation_tiers=("win32",),
+            risk=RiskTier.ALWAYS_CONFIRM, undo_supported=False, automation_tiers=("native_api", "ui_automation"),
         ),
         ActionSpec(
             name="volume.set", description="Set Windows master volume to a requested level.",
