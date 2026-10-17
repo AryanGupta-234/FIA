@@ -104,7 +104,9 @@ def teach_entity_alias(payload: EntityAliasRequest) -> dict[str, Any]:
             "target": payload.target,
         }
     try:
-        runtime.lexicon.teach_entity(payload.phrase, payload.entity_type, payload.target)
+        runtime.lexicon.teach_entity(
+            payload.phrase, payload.entity_type, payload.target, payload.scope,
+        )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"status": "learned", "phrase": payload.phrase, "entity_type": payload.entity_type}
@@ -115,14 +117,22 @@ def record_owner_feedback(payload: AliasFeedbackRequest) -> dict[str, Any]:
     action = runtime.registry.get(payload.action_name)
     if action is None:
         raise HTTPException(404, "Unknown registered action.")
-    result = runtime.lexicon.observe(
-        payload.phrase,
-        payload.action_name,
-        success=payload.success,
-        session_id=payload.session_id,
-        risk=action.risk,
-        explicit=False,
-    )
+    if payload.corrected_action:
+        corrected = runtime.registry.get(payload.corrected_action)
+        if corrected is None:
+            raise HTTPException(404, "Unknown corrected action.")
+        result = runtime.lexicon.correct(
+            payload.phrase, payload.action_name, payload.corrected_action,
+        )
+    else:
+        result = runtime.lexicon.observe(
+            payload.phrase,
+            payload.action_name,
+            success=payload.success,
+            session_id=payload.session_id,
+            risk=action.risk,
+            explicit=False,
+        )
     return {
         "status": result.status,
         "phrase": result.phrase,
@@ -137,6 +147,7 @@ def get_learning_state() -> dict[str, Any]:
     return {
         "aliases": runtime.store.aliases(),
         "candidates": runtime.store.alias_candidates(),
+        "negative_examples": runtime.store.negative_examples(),
         "successful_episodes": len(runtime.store.successful_episodes(limit=10000)),
     }
 
