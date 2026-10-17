@@ -108,10 +108,23 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
       <div class="panel">
         <div class="panel-head"><div><div class="panel-title">Owner Language & Memory</div><div class="panel-sub">Inspect contextual aliases, promotion candidates and what Prixon has learned from your feedback.</div></div><button id="learningRefresh" class="btn subtle">Refresh</button></div>
         <div id="learningSummary" class="metric" style="margin-bottom:14px"><div class="metric-label">LEARNING DIGEST</div><div class="metric-value" style="font-size:16px">Loading…</div><div class="metric-foot">Owner-controlled mappings only</div></div>
-        <div class="panel-head"><div><div class="panel-title">Promoted mappings</div><div class="panel-sub">Explicitly taught or owner-approved. Remove individual scopes without deleting other meanings.</div></div></div>
+        <div class="panel-head" style="margin-top:18px"><div><div class="panel-title">Teach Prixon a Mapping</div><div class="panel-sub">Your explicit teaching is strong evidence. A context scope can narrow where the phrase applies.</div></div></div>
+        <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin:10px 0">
+          <label class="list-main">Phrase<input id="teachPhrase" maxlength="180" placeholder="the music thing" style="width:100%;margin-top:6px"></label>
+          <label class="list-main">Mapping type<select id="teachType" style="width:100%;margin-top:6px"><option value="action">Action</option><option value="entity">Entity</option></select></label>
+          <label class="list-main" id="teachActionWrap">Registered action<select id="teachAction" style="width:100%;margin-top:6px"><option value="">Loading actions…</option></select></label>
+          <label class="list-main" id="teachEntityTypeWrap" style="display:none">Entity type<select id="teachEntityType" style="width:100%;margin-top:6px"><option value="application">Application</option><option value="window">Window</option><option value="folder">Folder</option><option value="file">File</option><option value="setting">Setting</option></select></label>
+          <label class="list-main" id="teachTargetWrap" style="display:none">Exact entity target<input id="teachTarget" placeholder="Installed app name or full path" style="width:100%;margin-top:6px"></label>
+          <label class="list-main">Context scope<select id="teachScopeType" style="width:100%;margin-top:6px"><option value="">General (all contexts)</option><option value="foreground_app">Foreground app title</option><option value="time_of_day">Time of day</option><option value="weekday">Weekday</option><option value="hour">Hour (0–23)</option></select></label>
+          <label class="list-main" id="teachScopeValueWrap" style="display:none">Scope value<input id="teachScopeValue" placeholder="Exact value" style="width:100%;margin-top:6px"></label>
+        </div>
+        <button id="teachMappingBtn" class="btn primary">Teach mapping</button>
+        <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Promoted mappings</div><div class="panel-sub">Explicitly taught or owner-approved. Remove individual scopes without deleting other meanings.</div></div></div>
         <div id="learningAliases" class="list"><div class="empty">Loading owner aliases…</div></div>
         <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Candidates for approval</div><div class="panel-sub">Repeated successful usage across independent sessions; never promoted silently.</div></div></div>
         <div id="learningCandidates" class="list"><div class="empty">Loading candidates…</div></div>
+        <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Routine Macros</div><div class="panel-sub">Review repeated successful plan shapes. Approved macros are available to the routine scheduler.</div></div></div>
+        <div id="macroList" class="list"><div class="empty">Loading macro proposals…</div></div>
         <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Negative memory</div><div class="panel-sub">Phrases previously corrected away from an action.</div></div></div>
         <div id="negativeMemory" class="list"><div class="empty">Loading corrections…</div></div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:20px">
@@ -214,8 +227,13 @@ async function refreshRoutines(){
   fillList("routineRunList",runs,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.routine_name||"Routine")+'</strong><small>'+esc(item.due_date)+' · '+esc(item.status)+'</small></div><span class="badge '+(item.status==="completed"?"good":item.status==="failed"||item.status==="interrupted"?"warn":"")+'">'+esc(item.status)+'</span></div>',"No routine runs recorded.");
 }
 async function refreshLearning(){
-  const [state,digest]=await Promise.all([request("/learning"),request("/learning/digest")]);
+  const [state,digest,macros,actions]=await Promise.all([
+    request("/learning"),request("/learning/digest"),request("/macros"),request("/actions")
+  ]);
   const aliases=state.aliases||[],candidates=digest.ready_for_approval||[],negatives=state.negative_examples||[];
+  const selectedAction=$("teachAction").value;
+  $("teachAction").innerHTML='<option value="">Choose an action</option>'+actions.map(a=>'<option value="'+esc(a.name)+'">'+esc(a.description||a.name)+'</option>').join("");
+  if(actions.some(a=>a.name===selectedAction))$("teachAction").value=selectedAction;
   $("learningSummary").innerHTML='<div class="metric-label">LEARNING DIGEST</div><div class="metric-value" style="font-size:16px">'+esc(digest.message||"No learning changes waiting for review.")+'</div><div class="metric-foot">'+aliases.length+' promoted mappings · '+candidates.length+' candidates · '+(state.successful_episodes||0)+' successful episodes</div>';
   fillList("learningAliases",aliases,item=>{
     const scope=item.scope||{};
@@ -223,6 +241,14 @@ async function refreshLearning(){
     return '<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' → '+esc(item.target)+'</strong><small>'+esc(item.target_type)+' · '+esc(scopeText)+' · confidence '+Math.round((item.confidence||0)*100)+'%</small></div><button class="btn subtle" data-learning-delete="'+esc(item.phrase)+'" data-learning-scope="'+esc(JSON.stringify(scope))+'">Remove</button></div>';
   },"No promoted aliases.");
   fillList("learningCandidates",candidates,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' → '+esc(item.action_name)+'</strong><small>'+Math.round((item.confidence||0)*100)+'% confidence · '+esc(item.independent_sessions)+' independent sessions · '+esc(item.successes)+' successes / '+esc(item.failures)+' failures</small></div><div style="display:flex;gap:6px"><button class="btn primary" data-learning-approve="'+esc(item.phrase)+'" data-learning-action="'+esc(item.action_name)+'">Approve</button><button class="btn subtle" data-learning-reject="'+esc(item.phrase)+'" data-learning-action="'+esc(item.action_name)+'">Reject</button></div></div>',"No candidates currently meet the approval threshold.");
+  fillList("macroList",macros,item=>{
+    const plan=(item.plan&&item.plan.steps)||[];
+    const shape=plan.map(step=>step.tool).join(" → ")||"No steps";
+    const controls=item.approved
+      ? '<button class="btn subtle" data-macro-toggle="'+esc(item.id)+'" data-approved="false">Revoke</button>'
+      : '<button class="btn primary" data-macro-toggle="'+esc(item.id)+'" data-approved="true">Approve</button>';
+    return '<div class="list-item"><div class="list-main"><strong>'+esc(item.name)+'</strong><small>'+esc(shape)+' · '+esc(item.successes)+' successes / '+esc(item.failures)+' failures</small></div><div style="display:flex;gap:7px;align-items:center"><span class="badge '+(item.approved?"good":"")+'">'+(item.approved?"Approved":"Proposal")+'</span>'+controls+'</div></div>';
+  },"No macro proposals yet. Repeated successful plans appear here.");
   fillList("negativeMemory",negatives,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' ↛ '+esc(item.action_name)+'</strong><small>'+esc(item.corrections)+' corrections · penalty '+Math.round((item.penalty||0)*100)+'%</small></div></div>',"No negative examples stored.");
 }
 async function refreshAudit(){
@@ -243,7 +269,7 @@ function showView(name){
   document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.view===name));
   if(name==="goals"){refreshGoals().catch(e=>console.error(e));refreshRoutines().catch(e=>console.error(e));}
   if(name==="activity")refreshAudit().catch(e=>console.error(e));
-  if(name==="learning")refreshLearning().catch(e=>console.error(e));
+  if(name==="learning"){refreshLearning().catch(e=>console.error(e));refreshTeachingFields();}
   if(name==="command")refreshActions().catch(e=>console.error(e));
 }
 document.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));
@@ -328,6 +354,53 @@ $("routineList").addEventListener("click",async event=>{
 $("auditRefresh").addEventListener("click",()=>refreshAudit());
 
 $("learningRefresh").addEventListener("click",()=>refreshLearning().catch(e=>console.error(e)));
+
+function refreshTeachingFields(){
+  const entity=$("teachType").value==="entity";
+  $("teachActionWrap").style.display=entity?"none":"block";
+  $("teachEntityTypeWrap").style.display=entity?"block":"none";
+  $("teachTargetWrap").style.display=entity?"block":"none";
+  $("teachScopeValueWrap").style.display=$("teachScopeType").value?"block":"none";
+}
+$("teachType").addEventListener("change",refreshTeachingFields);
+$("teachScopeType").addEventListener("change",refreshTeachingFields);
+$("teachMappingBtn").addEventListener("click",async()=>{
+  const phrase=$("teachPhrase").value.trim();
+  const isEntity=$("teachType").value==="entity";
+  const scopeType=$("teachScopeType").value;
+  const rawScope=$("teachScopeValue").value.trim();
+  if(!phrase)return;
+  if(scopeType&&!rawScope){alert("Enter a value for the selected context scope.");return;}
+  const scope={};
+  if(scopeType)scope[scopeType]=scopeType==="hour"?Number(rawScope):rawScope;
+  if(scopeType==="hour"&&(!Number.isInteger(scope.hour)||scope.hour<0||scope.hour>23)){alert("Hour must be an integer from 0 to 23.");return;}
+  const payload=isEntity?{
+    phrase,entity_type:$("teachEntityType").value,target:$("teachTarget").value.trim(),scope,confirmed:true
+  }:{phrase,action_name:$("teachAction").value,scope,confirmed:true};
+  if(isEntity&&!payload.target){alert("Enter the exact entity target.");return;}
+  if(!isEntity&&!payload.action_name){alert("Choose a registered action.");return;}
+  const button=$("teachMappingBtn");button.disabled=true;
+  try{
+    await request(isEntity?"/entities/aliases":"/aliases",{method:"POST",body:JSON.stringify(payload)});
+    $("teachPhrase").value="";$("teachTarget").value="";
+    await refreshLearning();
+  }catch(error){alert(error.message);}
+  finally{button.disabled=false;}
+});
+$("macroList").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-macro-toggle]");
+  if(!button)return;
+  const approved=button.dataset.approved==="true";
+  if(!window.confirm((approved?"Approve":"Revoke")+" this macro?"))return;
+  button.disabled=true;
+  try{
+    await request("/macros/"+encodeURIComponent(button.dataset.macroToggle)+"/approve",{
+      method:"POST",body:JSON.stringify({approved})
+    });
+    await refreshLearning();
+    await refreshRoutines();
+  }catch(error){alert(error.message);button.disabled=false;}
+});
 $("learningAliases").addEventListener("click",async event=>{
   const button=event.target.closest("[data-learning-delete]");
   if(!button)return;
