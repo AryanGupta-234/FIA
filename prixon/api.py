@@ -17,6 +17,7 @@ from prixon.schemas import (
     EntityAliasRequest,
     GoalCreateRequest,
     GoalStatusRequest,
+    LearningCandidateRequest,
     MacroApprovalRequest,
     MacroRunRequest,
     ProactiveFeedbackRequest,
@@ -177,6 +178,56 @@ def get_learning_state() -> dict[str, Any]:
         "negative_examples": runtime.store.negative_examples(),
         "successful_episodes": len(runtime.store.successful_episodes(limit=10000)),
     }
+
+
+@router.get("/learning/digest")
+def learning_digest() -> dict[str, Any]:
+    summary = runtime.store.get_setting("learning.last_digest", {})
+    proposals = runtime.lexicon.promotion_candidates()
+    demoted = int(summary.get("aliases_demoted", 0))
+    return {
+        "message": f"Learning digest: {len(proposals)} items ready for review; {demoted} entries demoted in the last consolidation.",
+        "ready_for_approval": proposals,
+        "last_consolidation": summary,
+        "owner_action_required": bool(proposals),
+    }
+
+
+@router.post("/learning/candidates/approve")
+def approve_learning_candidate(payload: LearningCandidateRequest) -> dict[str, Any]:
+    if not payload.confirmed:
+        return {
+            "status": "confirmation_required",
+            "phrase": payload.phrase,
+            "action": payload.action_name,
+        }
+    action = runtime.registry.get(payload.action_name)
+    if action is None:
+        raise HTTPException(404, "Unknown registered action.")
+    try:
+        result = runtime.lexicon.approve_candidate(
+            payload.phrase, payload.action_name, action.risk,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {
+        "status": result.status, "phrase": result.phrase,
+        "action": result.target, "confidence": result.confidence,
+        "independent_sessions": result.sessions,
+    }
+
+
+@router.post("/learning/candidates/reject")
+def reject_learning_candidate(payload: LearningCandidateRequest) -> dict[str, Any]:
+    if not payload.confirmed:
+        return {"status": "confirmation_required", "phrase": payload.phrase}
+    action = runtime.registry.get(payload.action_name)
+    if action is None:
+        raise HTTPException(404, "Unknown registered action.")
+    removed = runtime.lexicon.reject_candidate(payload.phrase, payload.action_name)
+    if not removed:
+        raise HTTPException(404, "Learning candidate not found.")
+    return {"status": "rejected", "phrase": payload.phrase, "action": payload.action_name}
 
 
 @router.post("/learning/consolidate")
