@@ -27,6 +27,7 @@ class ActionSpec(BaseModel):
     name: str
     description: str
     examples: tuple[str, ...] = ()
+    hard_negatives: tuple[str, ...] = ()
     intent_class: IntentClass
     verb_type: str
     target_type: str
