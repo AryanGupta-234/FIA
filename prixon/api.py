@@ -4,11 +4,13 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import HTMLResponse
 
 from prixon.agent_loop import AgentLoop
 from prixon.governance import decide
 from prixon.planner import validate_plan
 from prixon.runtime import AgentRuntime
+from prixon.ui import render_prixon_ui
 from prixon.schemas import (
     AgentPlan,
     AliasFeedbackRequest,
@@ -34,6 +36,11 @@ router = APIRouter(prefix="/api/v1/agent", tags=["Prixon Agent"])
 # One local agent runtime per API process. The runtime owns SQLite and local Ollama only.
 runtime = AgentRuntime()
 agent_loop = AgentLoop(runtime)
+
+
+@router.get("/ui", response_class=HTMLResponse, include_in_schema=False)
+def prixon_ui() -> HTMLResponse:
+    return render_prixon_ui()
 
 
 @router.get("/health")
