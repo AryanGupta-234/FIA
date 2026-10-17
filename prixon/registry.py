@@ -19,6 +19,9 @@ class ActionRegistry:
     def get(self, name: str) -> ActionSpec | None:
         return self._actions.get(name)
 
+    def unregister(self, name: str) -> bool:
+        return self._actions.pop(name, None) is not None
+
     def all(self) -> list[ActionSpec]:
         return list(self._actions.values())
 
