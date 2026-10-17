@@ -240,7 +240,7 @@ async function refreshRoutines(){
   fillList("routineRunList",runs,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.routine_name||"Routine")+'</strong><small>'+esc(item.due_date)+' · '+esc(item.status)+'</small></div><span class="badge '+(item.status==="completed"?"good":item.status==="failed"||item.status==="interrupted"?"warn":"")+'">'+esc(item.status)+'</span></div>',"No routine runs recorded.");
 }
 async function refreshLearning(){
-  const [state,digest,macros,actions,decisions]=await Promise.all([
+  const [state,digest,macros,actions,decisions,calibration]=await Promise.all([
     request("/learning"),request("/learning/digest"),request("/macros"),request("/actions"),
     request("/decisions/review?limit=60"),request("/calibration/proposal")
   ]);

@@ -138,15 +138,20 @@ py -3.11 -m pip install -e ".[windows,browser]"
 
 The `browser.debug_status` action only calls Chromium's local browser/version and target-list diagnostics and returns the product/version plus counts by target type. It discards target URLs and titles and does not inspect page contents, cookies, storage, DOM, form values or browser history. The endpoint is required to be loopback and match the configured port; non-local websocket destinations are rejected. Disable the adapter with `PRIXON_BROWSER_DEBUG_ENABLED=false`.
 
-## Optional local voice kill
+## Optional local push-to-talk voice
 
-Voice kill is opt-in and uses a local Vosk model. It does not keep the microphone open. Press `Ctrl+Alt+V`, then say **“Prixon stop”** within the short capture window. Only fixed stop/halt/abort phrases are accepted.
+Voice remains opt-in. The microphone is not continuously open: the local Vosk listener is activated only after a hotkey. The optional setup installs Vosk/sounddevice and a local English speech model, then enables two separate hotkeys:
+
+- `Ctrl+Alt+V`: short constrained emergency-stop phrase capture (for example, “Prixon stop”).
+- `Ctrl+Alt+M`: finite local speech-to-text capture for ordinary commands; the recognized request goes through the same owner-request routing, confidence/risk gates, confirmation and audit path as typed input.
+
+Raw audio is processed in memory and discarded; no cloud speech service is used. Recognized transcripts are not returned by the voice-command history endpoint. The voice setup script enables the optional local commands and kill path; it does not enable voice at Windows sign-in if the user has not installed/started Prixon.
 
 ~~~powershell
 ./scripts/setup-prixon-voice.ps1
 ~~~
 
-The setup script installs the optional Vosk and sounddevice packages, downloads the small English model, writes its local path into `.env`, and enables voice kill. Disable it with `PRIXON_VOICE_KILL_ENABLED=false`. Status is available at `GET /api/v1/agent/voice/status`.
+Restart Prixon after the setup. Status is available at `GET /api/v1/agent/voice/status`; bounded in-memory command outcomes are available at `GET /api/v1/agent/voice/commands`. Set PRIXON_VOICE_KILL_ENABLED=false and PRIXON_VOICE_COMMANDS_ENABLED=false in the local .env file to disable both listeners.
 
 ## API
 Agent routes are mounted under `/api/v1/agent`.
@@ -160,7 +165,7 @@ Core routes:
 - `POST /runtime/start`
 - `POST /runtime/stop`
 - `POST /kill`
-- `GET /voice/status`
+- `GET /voice/status`, `GET /voice/commands`
 - `GET /audit`, `GET /audit/export`, `GET /audit/archives`, `GET /audit/archives/{filename}`
 - `GET /world-state`
 - `POST /undo/{id}`
