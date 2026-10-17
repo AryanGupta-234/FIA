@@ -494,3 +494,27 @@ def test_implicit_learning_waits_for_owner_approval(tmp_path):
     approved = lexicon.approve_candidate("fire up", "app.launch", RiskTier.REVERSIBLE)
     assert approved.status == "promoted"
     assert lexicon.lookup("fire up")["explicit"] is True
+
+
+def test_entity_alias_to_deleted_file_is_rejected(tmp_path):
+    from pathlib import Path
+
+    store = AgentStore(tmp_path / "stale-alias.sqlite3")
+    missing = tmp_path / "vanished.txt"
+    store.put_alias("old report", "file", str(missing), explicit=True)
+    result = EntityIndex(store).resolve("old report", "file")
+    assert result is None
+    assert any(row["event_type"] == "stale_entity_alias" for row in store.audit_rows())
+
+
+def test_routine_due_event_is_persisted_with_the_routine_claim(tmp_path):
+    from datetime import datetime
+
+    store = AgentStore(tmp_path / "routine-event.sqlite3")
+    routine_id = store.create_routine("Daily summary", 42, "08:00", weekdays=[0, 1, 2, 3, 4, 5, 6])
+    due = datetime(2026, 10, 19, 9, 0).astimezone()
+    fired = store.due_routines(due)
+    assert fired[0]["id"] == routine_id
+    pending = store.pending_events()
+    assert pending[-1]["event_type"] == "routine_due"
+    assert pending[-1]["payload"]["routine_id"] == routine_id
