@@ -201,12 +201,19 @@ class AgentLoop:
                 if event.event_type == "window_destroyed":
                     handle = str(event.payload.get("hwnd") or "")
                     if handle:
+                        self.runtime.executor.adapters.invalidate_window_cache(int(handle))
                         self.runtime.index.remove_target("window", handle)
                         self.runtime.references.forget(handle)
                 elif event.event_type == "window_created":
+                    handle = event.payload.get("hwnd")
+                    if handle:
+                        self.runtime.executor.adapters.invalidate_window_cache(int(handle))
                     # Rebuild a bounded snapshot to pick up the new top-level HWND.
                     await asyncio.to_thread(self.runtime.refresh_entities, True)
                 elif event.event_type == "foreground_changed":
+                    handle = event.payload.get("hwnd")
+                    if handle:
+                        self.runtime.executor.adapters.invalidate_window_cache(int(handle))
                     if event.payload.get("sensitive"):
                         self.runtime.references.clear()
                     elif event.payload.get("hwnd") and event.payload.get("title"):
