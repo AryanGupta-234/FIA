@@ -340,7 +340,14 @@ def governance_check(payload: dict[str, Any]) -> dict[str, Any]:
     action = runtime.registry.get(str(payload.get("action", "")))
     if action is None:
         return {"allowed": False, "reason": "unknown_action"}
-    outcome = decide(action.risk, confirmed=bool(payload.get("confirmed", False)))
+    macro_allowlisted = action.name.startswith("macro.") and (
+        runtime._macro_id_for_action(action.name) is not None
+        and any(item["id"] == runtime._macro_id_for_action(action.name) for item in runtime.store.macros(approved=True))
+    )
+    outcome = decide(
+        action.risk, confirmed=bool(payload.get("confirmed", False)),
+        allowlisted=macro_allowlisted,
+    )
     return {
         "allowed": outcome.allowed,
         "requires_confirmation": outcome.requires_confirmation,
