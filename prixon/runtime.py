@@ -376,6 +376,16 @@ class AgentRuntime:
             if not 0 <= level <= 100:
                 return args, "Volume level must be between 0 and 100."
             args["level"] = level
+        elif action_name.startswith("media."):
+            if not args.get("application"):
+                normalized_request = " ".join(text.casefold().split())
+                mentioned_apps = [
+                    entity for entity in self.store.entity_rows("application")
+                    if entity["normalized"] and entity["normalized"] in normalized_request
+                ]
+                if mentioned_apps:
+                    chosen_app = max(mentioned_apps, key=lambda item: len(item["normalized"]))
+                    args["application"] = chosen_app["name"]
         elif action_name == "clipboard.read":
             try:
                 max_chars = int(args.get("max_chars", 2000))
@@ -1220,6 +1230,17 @@ class AgentRuntime:
 
     @staticmethod
     def format_observation(action_name: str, output: dict[str, Any]) -> str:
+        if action_name == "media.status":
+            state = str(output.get("playback_status", "unknown")).replace("_", " ")
+            app_id = str(output.get("session_app_id") or "current media session")
+            return f"{app_id} is {state}."
+        if action_name in {"media.play", "media.pause", "media.stop"}:
+            state = str(output.get("playback_status", "unknown")).replace("_", " ")
+            return f"Media command accepted. Playback is {state}."
+        if action_name == "media.skip_next":
+            return "Skipped to the next media item."
+        if action_name == "media.skip_previous":
+            return "Skipped to the previous media item."
         if action_name == "clipboard.read":
             return str(output.get("text", ""))
         if action_name == "clipboard.inspect":

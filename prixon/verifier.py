@@ -75,6 +75,28 @@ def compare_expected(
                 isinstance(observed.get("text"), str)
                 and observed.get("content_read_explicitly") is True
             )
+        elif "media_status_returned" in key:
+            matched += int(
+                observed.get("session_available") is True
+                and "playback_status" in observed
+            )
+        elif "media_playing" in key:
+            matched += int(
+                observed.get("accepted") is True
+                and observed.get("playback_status") == "playing"
+            )
+        elif "media_paused" in key:
+            matched += int(
+                observed.get("accepted") is True
+                and observed.get("playback_status") == "paused"
+            )
+        elif "media_stopped" in key:
+            matched += int(
+                observed.get("accepted") is True
+                and observed.get("playback_status") == "stopped"
+            )
+        elif "media_command_accepted" in key:
+            matched += int(observed.get("accepted") is True)
         elif "file_in_quarantine" in key:
             matched += int(bool(observed.get("quarantined_path")))
         elif "window_closed_or_close_prompt_shown" in key:

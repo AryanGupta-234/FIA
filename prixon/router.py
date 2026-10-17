@@ -55,6 +55,14 @@ def classify(text: str) -> IntentClass:
     ):
         return IntentClass.LAUNCH
     if any(term in value for term in (
+        "play music", "resume music", "continue playback", "start playback",
+        "play spotify", "resume spotify", "pause music", "pause playback",
+        "pause spotify", "stop music", "stop playback", "stop spotify playback",
+        "next track", "next song", "skip this song", "previous track",
+        "previous song", "skip back one track", "skip forward one track",
+    )):
+        return IntentClass.CONTROL
+    if any(term in value for term in (
         "minimize", "maximize", "make this window full size", "make this app full screen",
         "expand the current window", "fill the screen with this window", "put this window away",
         "send the current window to the taskbar", "hide the foreground window",
