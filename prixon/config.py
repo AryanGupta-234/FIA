@@ -17,8 +17,10 @@ class PrixonSettings(BaseSettings):
     semantic_model_name: str = "BAAI/bge-small-en-v1.5"
     agent_autostart: bool = True
     voice_kill_enabled: bool = False
+    voice_commands_enabled: bool = False
     voice_model_path: str = ""
     voice_capture_seconds: float = 5.0
+    voice_command_capture_seconds: float = 7.0
     browser_debug_enabled: bool = False
     browser_debug_port: int = 9222
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_prefix="PRIXON_")
