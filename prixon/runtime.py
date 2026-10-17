@@ -322,7 +322,7 @@ class AgentRuntime:
                 normalized = normalized.replace(alias["phrase"], alias["target"].replace(".", " "))
                 alias_used = True
 
-        route = IntentRouter(self.registry).route(normalized)
+        route = IntentRouter(self.registry, self.store).route(normalized)
         arbitration: dict[str, Any] | None = None
         if route.status != "selected" and self.semantic is not None:
             try:
@@ -550,7 +550,7 @@ class AgentRuntime:
         execute: bool, confirmed: bool, session_id: str,
     ) -> dict[str, Any]:
         situation = self.situation()
-        clause_routes = [IntentRouter(self.registry).route(clause) for clause in clauses]
+        clause_routes = [IntentRouter(self.registry, self.store).route(clause) for clause in clauses]
         if any(not route.candidates for route in clause_routes):
             return {
                 "status": "clarify", "reason": "compound_clause_not_grounded",
@@ -599,7 +599,7 @@ class AgentRuntime:
             action = self.registry.get(step.tool)
             if action is None:
                 return {"status": "rejected", "reason": "unknown_tool", "tool": step.tool}
-            route = IntentRouter(self.registry).route(clauses[index])
+            route = IntentRouter(self.registry, self.store).route(clauses[index])
             retrieved_names = {candidate.action.name for candidate in route.candidates[:5]}
             if (
                 (route.status == "selected" and route.selected_action != step.tool)
