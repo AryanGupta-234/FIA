@@ -386,11 +386,13 @@ class AgentStore:
             negatives = db.execute("DELETE FROM negative_examples").rowcount
             examples = db.execute("DELETE FROM semantic_examples").rowcount
             pending = db.execute("DELETE FROM pending_learning").rowcount
+            episodes = db.execute("DELETE FROM episodes").rowcount
             macros = db.execute("DELETE FROM macros").rowcount
         return {
             "aliases": int(aliases), "candidates": int(candidates),
             "negative_examples": int(negatives), "semantic_examples": int(examples),
-            "pending_learning": int(pending), "macros": int(macros),
+            "pending_learning": int(pending), "episodes": int(episodes),
+            "macros": int(macros),
         }
 
     def queue_learning_signal(
