@@ -272,7 +272,7 @@ class AgentRuntime:
         if action_name in {"app.launch", "app.is_running"}:
             if action_name == "app.launch":
                 match = re.search(
-                    r"\b(?:open|launch|start|fire up)\s+(.+?)(?:\s+please)?$", text, re.I,
+                    r"\b(?:open|launch|start|fire up|bring up|run)\s+(.+?)(?:\s+please)?$", text, re.I,
                 )
             else:
                 match = re.search(
