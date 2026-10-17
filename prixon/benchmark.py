@@ -18,7 +18,7 @@ def _percentile(values: list[float], quantile: float) -> float | None:
     if not values:
         return None
     ordered = sorted(values)
-    index = max(0, min(len(ordered) - 1, int((quantile * len(ordered) + 0.999999)) - 1))
+    index = max(0, min(len(ordered) - 1, int(quantile * len(ordered) + 0.999999) - 1))
     return round(ordered[index], 2)
 
 
