@@ -351,6 +351,25 @@ class AgentStore:
         with self.connect() as db:
             db.execute("DELETE FROM aliases WHERE phrase=?", (normalized,))
 
+    def remove_alias_candidate(self, phrase: str, target: str | None = None) -> int:
+        normalized = " ".join(phrase.casefold().split())
+        with self.connect() as db:
+            if target is None:
+                cursor = db.execute("DELETE FROM alias_candidates WHERE phrase=?", (normalized,))
+            else:
+                cursor = db.execute(
+                    "DELETE FROM alias_candidates WHERE phrase=? AND target=?",
+                    (normalized, target),
+                )
+            return int(cursor.rowcount)
+
+    def remove_all_user_learning(self) -> dict[str, int]:
+        with self.connect() as db:
+            aliases = db.execute("DELETE FROM aliases").rowcount
+            candidates = db.execute("DELETE FROM alias_candidates").rowcount
+            negatives = db.execute("DELETE FROM negative_examples").rowcount
+        return {"aliases": int(aliases), "candidates": int(candidates), "negative_examples": int(negatives)}
+
     def undo_record(self, undo_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
             row = db.execute("SELECT * FROM undo_journal WHERE id=?", (undo_id,)).fetchone()
