@@ -169,6 +169,7 @@ class AgentLoop:
                 self.store.mark_event_processed(persisted_id)
             if now - self._last_consolidation >= 86400:
                 await self._run_consolidation(now)
+            await asyncio.to_thread(self.runtime.process_pending_learning, 30)
             await self._continue_explicit_goals()
             await asyncio.sleep(max(0.5, self.runtime.settings.agent_loop_poll_seconds))
 
