@@ -156,3 +156,14 @@ class DeleteAliasRequest(BaseModel):
 
 class ResetLearningRequest(BaseModel):
     confirmed: bool = False
+
+
+class RoutineCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    macro_id: int = Field(gt=0)
+    time_local: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    weekdays: list[int] = Field(default_factory=lambda: list(range(7)), min_length=1, max_length=7)
+
+
+class RoutineStatusRequest(BaseModel):
+    enabled: bool
