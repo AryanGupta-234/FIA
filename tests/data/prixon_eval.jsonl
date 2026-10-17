@@ -467,3 +467,12 @@
 {"text":"what is my volume","expected_action":"system.audio","split":"growing","case_type":"clean"}
 {"text":"current audio level","expected_action":"system.audio","split":"growing","case_type":"noisy"}
 {"text":"show master volume","expected_action":"system.audio","split":"growing","case_type":"clean"}
+{"text":"give me a pc health summary","expected_action":"system.status","split":"frozen","case_type":"lookalike"}
+{"text":"please give me a pc health summary","expected_action":"system.status","split":"frozen","case_type":"lookalike"}
+{"text":"display the process list","expected_action":"process.list","split":"frozen","case_type":"lookalike"}
+{"text":"please display the process list","expected_action":"process.list","split":"frozen","case_type":"lookalike"}
+{"text":"is notepad open","expected_action":"app.is_running","split":"frozen","case_type":"lookalike"}
+{"text":"check if notepad is running","expected_action":"app.is_running","split":"growing","case_type":"lookalike"}
+{"text":"make this window full size","expected_action":"window.maximize","split":"growing","case_type":"lookalike"}
+{"text":"unminimize this window","expected_action":"window.restore","split":"growing","case_type":"lookalike"}
+{"text":"close the current app","expected_action":"window.close","split":"growing","case_type":"lookalike"}
