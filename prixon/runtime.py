@@ -123,22 +123,26 @@ class AgentRuntime:
         args = dict(supplied or {})
         snapshot = self.perception.snapshot()
         foreground = snapshot.get("foreground_window")
-        if action_name == "app.launch":
+        if action_name in {"app.launch", "app.is_running"}:
             mention = str(args.get("application") or "")
             if not mention:
                 match = re.search(r"\b(?:open|launch|start|fire up)\s+(.+?)(?:\s+please)?$", text, re.I)
                 mention = match.group(1).strip(" .") if match else ""
             if not mention:
                 return args, "Which installed application should I open?"
-            entity = self.index.resolve(mention, "application")
-            if not entity:
-                self.refresh_entities()
-                entity = self.index.resolve(mention, "application")
-            if not entity:
-                return args, f"I couldn't ground '{mention}' to an installed Start Menu application."
             args["application"] = mention
-            args["application_target"] = entity["target"]
-        elif action_name in {"window.minimize", "window.restore"}:
+            if action_name == "app.launch":
+                entity = self.index.resolve(mention, "application")
+                if not entity:
+                    self.refresh_entities()
+                    entity = self.index.resolve(mention, "application")
+                if not entity:
+                    return args, f"I couldn't ground '{mention}' to an installed Start Menu application."
+                args["application_target"] = entity["target"]
+        elif action_name in {"window.minimize", "window.maximize", "window.restore", "window.close"}:
+            if args.get("hwnd") == "$previous.hwnd":
+                args["window"] = args.get("window", "$previous.window")
+                return args, None
             if not foreground or not foreground.get("handle"):
                 return args, "There is no grounded foreground window to control."
             args["window"] = str(foreground.get("title") or foreground["handle"])
@@ -181,12 +185,39 @@ class AgentRuntime:
         alias_used = False
         # Only user-taught aliases are eligible for direct substitution.
         for alias in self.store.aliases():
-            if alias["phrase"] in normalized:
+            if alias["target_type"] == "action" and alias["phrase"] in normalized:
                 normalized = normalized.replace(alias["phrase"], alias["target"].replace(".", " "))
                 alias_used = True
 
         route = IntentRouter(self.registry).route(normalized)
         arbitration: dict[str, Any] | None = None
+        if route.status != "selected" and self.semantic is not None:
+            try:
+                retrieved = await __import__("asyncio").to_thread(self.semantic.retrieve, normalized, 8)
+                best_by_action: dict[str, float] = {}
+                for item in retrieved:
+                    best_by_action[item.action_name] = max(
+                        best_by_action.get(item.action_name, 0.0), item.score,
+                    )
+                compatible = [
+                    (self.registry.get(name), score)
+                    for name, score in best_by_action.items()
+                    if self.registry.get(name) is not None
+                    and self.registry.get(name).intent_class == route.intent_class
+                ]
+                compatible.sort(key=lambda item: item[1], reverse=True)
+                if compatible and compatible[0][1] >= 0.55:
+                    from prixon.schemas import Candidate
+                    action, score = compatible[0]
+                    margin = score - (compatible[1][1] if len(compatible) > 1 else 0.0)
+                    if margin >= 0.06:
+                        route.status = "selected"
+                        route.selected_action = action.name
+                        route.confidence = score
+                        route.reason = "bge_semantic_retrieval"
+                        route.candidates = [Candidate(action=action, score=score, matched_by="fastembed")]
+            except Exception as exc:
+                logger.info("Semantic retrieval unavailable for this request: %s", exc)
         if route.status != "selected":
             tools = self._shortlist(route)
             if tools:
@@ -284,13 +315,13 @@ class AgentRuntime:
         if not execute:
             return {**preview, "plan": plan.model_dump(mode="json"), "plan_validation": validation.model_dump()}
         confidence = float(preview.get("confidence", 0))
-        if not meets_risk_threshold(confidence, action.risk.value):
+        if action.risk == RiskTier.ALWAYS_CONFIRM and not confirmed:
+            return {"status": "confirmation_required", "action": action_name, "args": merged_args}
+        if action.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(confidence, action.risk.value):
             return {
                 "status": "clarify", "reason": "confidence_below_risk_threshold",
                 "confidence": confidence, "risk": action.risk.value,
             }
-        if action.risk == RiskTier.ALWAYS_CONFIRM and not confirmed:
-            return {"status": "confirmation_required", "action": action_name, "args": merged_args}
         result = self.executor.execute_action(
             action_name, merged_args, confirmed=confirmed, confidence=confidence,
         )
@@ -337,7 +368,10 @@ class AgentRuntime:
             return {"status": "clarify", "reason": "plan_clause_count_mismatch",
                     "clarification": "Please separate the requested steps more clearly."}
         for index, step in enumerate(plan.steps):
-            enriched, clarification = self._fill_args(step.tool, clauses[index], step.args)
+            if step.args.get("hwnd") == "$previous.hwnd":
+                enriched, clarification = dict(step.args), None
+            else:
+                enriched, clarification = self._fill_args(step.tool, clauses[index], step.args)
             if clarification:
                 return {"status": "clarify", "clarification": clarification,
                         "plan": plan.model_dump(mode="json")}
@@ -369,7 +403,8 @@ class AgentRuntime:
             return {"status": "already_processed", "current_status": record["status"]}
         try:
             success = self.executor.adapters.undo(
-                record["action_name"], record["args"], record["before_state"], {},
+                record["action_name"], record["args"], record["before_state"],
+                record.get("output", {}),
             )
             error = None
         except Exception as exc:
