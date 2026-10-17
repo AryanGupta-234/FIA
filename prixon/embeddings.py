@@ -67,6 +67,17 @@ class SemanticRetriever:
                         row["action_name"], row["phrase"], row["vector"],
                     ))
 
+    def clear_user_examples(self) -> int:
+        user_rows = self.store.semantic_examples() if self.store is not None else []
+        for row in user_rows:
+            self._examples = [
+                item for item in self._examples
+                if not (item[0] == row["action_name"] and item[1] == row["phrase"])
+            ]
+            if self.store is not None:
+                self.store.remove_semantic_example(row["action_name"], row["phrase"])
+        return len(user_rows)
+
     def retrieve(self, utterance: str, limit: int = 8) -> list[RetrievedAction]:
         vector = self.embedder.embed([utterance])[0]
         ranked = [
