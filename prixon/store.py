@@ -77,6 +77,15 @@ class AgentStore:
                     created_at REAL NOT NULL,
                     PRIMARY KEY(action_name, phrase)
                 );
+                CREATE TABLE IF NOT EXISTS pending_learning (
+                    id TEXT PRIMARY KEY,
+                    phrase TEXT NOT NULL,
+                    action_name TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    risk TEXT NOT NULL,
+                    undo_id TEXT,
+                    created_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS episodes (
                     id TEXT PRIMARY KEY,
                     utterance TEXT NOT NULL,
@@ -376,12 +385,63 @@ class AgentStore:
             candidates = db.execute("DELETE FROM alias_candidates").rowcount
             negatives = db.execute("DELETE FROM negative_examples").rowcount
             examples = db.execute("DELETE FROM semantic_examples").rowcount
+            pending = db.execute("DELETE FROM pending_learning").rowcount
             macros = db.execute("DELETE FROM macros").rowcount
         return {
             "aliases": int(aliases), "candidates": int(candidates),
             "negative_examples": int(negatives), "semantic_examples": int(examples),
-            "macros": int(macros),
+            "pending_learning": int(pending), "macros": int(macros),
         }
+
+    def queue_learning_signal(
+        self, phrase: str, action_name: str, session_id: str,
+        risk: str, undo_id: str | None = None,
+    ) -> str:
+        signal_id = str(uuid.uuid4())
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO pending_learning(id,phrase,action_name,session_id,risk,undo_id,created_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (signal_id, phrase, action_name, session_id, risk, undo_id, time.time()),
+            )
+        return signal_id
+
+    def pending_learning_signals(self, older_than: float | None = None) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            if older_than is None:
+                rows = db.execute("SELECT * FROM pending_learning ORDER BY created_at").fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM pending_learning WHERE created_at<=? ORDER BY created_at",
+                    (older_than,),
+                ).fetchall()
+            return [
+                {"id": row["id"], "phrase": row["phrase"], "action_name": row["action_name"],
+                 "session_id": row["session_id"], "risk": row["risk"],
+                 "undo_id": row["undo_id"], "created_at": row["created_at"]}
+                for row in rows
+            ]
+
+    def discard_pending_learning(
+        self, *, signal_id: str | None = None, session_id: str | None = None,
+        undo_id: str | None = None, phrase: str | None = None,
+    ) -> int:
+        clauses, values = [], []
+        for column, value in (
+            ("id", signal_id), ("session_id", session_id),
+            ("undo_id", undo_id), ("phrase", phrase),
+        ):
+            if value is not None:
+                clauses.append(f"{column}=?")
+                values.append(value)
+        if not clauses:
+            raise ValueError("At least one pending-learning selector is required.")
+        with self.connect() as db:
+            cursor = db.execute(
+                "DELETE FROM pending_learning WHERE " + " AND ".join(clauses),
+                tuple(values),
+            )
+            return int(cursor.rowcount)
 
     def add_semantic_example(
         self, action_name: str, phrase: str, vector: list[float],
