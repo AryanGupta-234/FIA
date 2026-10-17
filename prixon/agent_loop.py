@@ -93,6 +93,16 @@ class AgentLoop:
             return {"status": "already_running"}
         self.runtime.kill_switch.reset()
         self._running = True
+        interrupted = self.store.goals(("active",))
+        for goal in interrupted:
+            self.store.set_goal_status(goal["id"], "blocked")
+            self.store.audit("goal_interrupted_by_restart", {
+                "goal_id": goal["id"], "description": goal["description"],
+            })
+        for event in self.store.pending_events(limit=500):
+            self.bus.publish(
+                event["event_type"], event["payload"], persisted_id=event["id"],
+            )
         await self.process_observer.start()
         self.window_observer.start()
         downloads_watched = self.file_observer.start()
@@ -134,7 +144,9 @@ class AgentLoop:
                 self._check_battery()
                 self._last_battery_check = now
             for event in self.bus.drain(100):
-                persisted_id = self.store.enqueue_event(event.event_type, event.payload)
+                persisted_id = event.persisted_id or self.store.enqueue_event(
+                    event.event_type, event.payload,
+                )
                 if event.event_type == "foreground_changed":
                     if event.payload.get("sensitive"):
                         self.runtime.references.clear()
