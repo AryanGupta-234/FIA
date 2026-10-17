@@ -579,12 +579,29 @@ class AgentRuntime:
                 risk=action.risk, explicit=False,
             )
         response_text = self.format_observation(action_name, result.output) if result.success else None
+        recovery = {"performed": False}
+        if not result.success:
+            recovery = await self._reflect_and_replan_single(
+                text, action_name, merged_args,
+                {"error": result.error, "output": result.output},
+                confirmed=confirmed, session_id=session_id,
+            )
         return {
-            "status": "completed" if result.success else "failed",
-            "action": action_name, "answer": response_text,
-            "output": result.output, "error": result.error,
-            "verified": result.verified, "undo_id": result.undo_id,
-            "confidence": confidence, "plan": plan.model_dump(mode="json"),
+            "status": (
+                recovery.get("status")
+                if recovery.get("performed") and recovery.get("status") == "completed"
+                else "completed" if result.success else "failed"
+            ),
+            "action": recovery.get("action", action_name),
+            "answer": response_text,
+            "output": recovery.get("output", result.output),
+            "error": recovery.get("error", result.error),
+            "verified": recovery.get("verified", result.verified),
+            "undo_id": recovery.get("undo_id", result.undo_id),
+            "confidence": recovery.get("confidence", confidence),
+            "reflection": recovery.get("reflection"),
+            "replan": recovery,
+            "plan": plan.model_dump(mode="json"),
         }
 
     async def _run_compound(
@@ -700,6 +717,154 @@ class AgentRuntime:
         outcome = "success" if result["status"] == "completed" else "failure"
         self.store.episode(original, ["L3", "L4", "L5"], plan.model_dump(mode="json"), outcome, result.get("reason"))
         return {"status": result["status"], "execution": result, "plan": plan.model_dump(mode="json")}
+
+
+    @staticmethod
+    def _risk_rank(risk: RiskTier) -> int:
+        return {
+            RiskTier.READ_ONLY: 0,
+            RiskTier.REVERSIBLE: 1,
+            RiskTier.ROUTINE: 2,
+            RiskTier.ALWAYS_CONFIRM: 3,
+        }[risk]
+
+    async def _reflect_and_replan_single(
+        self,
+        text: str,
+        failed_action: str,
+        failed_args: dict[str, Any],
+        failure: dict[str, Any],
+        *,
+        confirmed: bool,
+        session_id: str,
+    ) -> dict[str, Any]:
+        original = self.registry.get(failed_action)
+        if original is None:
+            return {"performed": False, "reason": "failed_action_not_registered"}
+        route = IntentRouter(self.registry, self.store).route(text)
+        rank = self._risk_rank(original.risk)
+        candidates = []
+        for candidate in route.candidates:
+            action = candidate.action
+            if action.name == failed_action or self._risk_rank(action.risk) > rank:
+                continue
+            candidates.append({
+                "name": action.name,
+                "description": action.description,
+                "risk": action.risk.value,
+                "required_slots": list(action.required_slots),
+                "postconditions": list(action.postconditions),
+            })
+        if not candidates:
+            return {
+                "performed": False,
+                "reason": "no_deterministically_grounded_same_or_lower_risk_alternative",
+            }
+        try:
+            reflection = await self.ollama.reflect_failure(
+                text, failed_action,
+                {"error": failure.get("error"), "output": failure.get("output", {})},
+                candidates, self.store.recent_episodes(2),
+            )
+        except Exception as exc:
+            return {
+                "performed": False,
+                "reason": "reflection_unavailable",
+                "error_type": type(exc).__name__,
+            }
+        self.store.audit("failure_reflection", {
+            "utterance": text, "failed_action": failed_action,
+            "reflection": reflection,
+        })
+        if not reflection.get("replan") or not reflection.get("alternative_action"):
+            return {"performed": False, "reflection": reflection}
+        alternative = self.registry.get(str(reflection["alternative_action"]))
+        if (
+            alternative is None
+            or alternative.name not in {item["name"] for item in candidates}
+            or self._risk_rank(alternative.risk) > rank
+        ):
+            return {"performed": False, "reason": "alternative_failed_deterministic_risk_check", "reflection": reflection}
+
+        # Slot values are grounded again from the owner's original words; failed/model args are not reused.
+        args, clarification = self._fill_args(alternative.name, text)
+        if clarification:
+            return {
+                "performed": False, "reason": "alternative_needs_grounding",
+                "clarification": clarification, "reflection": reflection,
+            }
+        validation = validate_plan(AgentPlan(
+            goal=text,
+            steps=[PlanStep(
+                tool=alternative.name, args=args,
+                expected_outcome=", ".join(alternative.postconditions),
+                confidence=0.0,
+            )],
+        ), self.registry, 1)
+        if not validation.valid:
+            return {
+                "performed": False, "reason": "alternative_plan_invalid",
+                "errors": validation.errors, "reflection": reflection,
+            }
+        if alternative.risk == RiskTier.ALWAYS_CONFIRM and not confirmed:
+            return {
+                "performed": False, "status": "confirmation_required",
+                "alternative_action": alternative.name, "args": args,
+                "reflection": reflection,
+            }
+        # Reflection cannot grant confidence: use only deterministic retrieval and slot evidence.
+        selected_score = next(
+            (item.score for item in route.candidates if item.action.name == alternative.name),
+            0.0,
+        )
+        runner_up = max(
+            (item.score for item in route.candidates if item.action.name != alternative.name),
+            default=0.0,
+        )
+        slot_score = (
+            sum(args.get(slot) not in (None, "") for slot in alternative.required_slots)
+            / len(alternative.required_slots)
+            if alternative.required_slots else 1.0
+        )
+        confidence = fuse_confidence(DecisionSignals(
+            retrieval_margin=max(0.0, selected_score - runner_up),
+            slot_grounding=slot_score,
+            llm_confidence=0.0,
+            context_prior=0.5,
+            user_lexicon_hit=0.0,
+        ))
+        if alternative.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(
+            confidence, alternative.risk.value,
+        ):
+            return {
+                "performed": False, "reason": "alternative_below_risk_threshold",
+                "confidence": confidence, "reflection": reflection,
+            }
+        result = self.executor.execute_action(
+            alternative.name, args, confirmed=confirmed, confidence=confidence,
+            utterance=text, session_id=session_id,
+        )
+        self.store.episode(
+            text, ["reflection", "replan", "executor", "verifier"],
+            {"goal": text, "steps": [{
+                "tool": alternative.name, "args": args,
+                "expected_outcome": ", ".join(alternative.postconditions),
+                "confidence": confidence,
+            }]},
+            "success" if result.success else "failure",
+            result.error,
+        )
+        return {
+            "performed": True,
+            "status": "completed" if result.success else "failed",
+            "action": alternative.name,
+            "output": result.output,
+            "error": result.error,
+            "verified": result.verified,
+            "undo_id": result.undo_id,
+            "confidence": confidence,
+            "reflection": reflection,
+        }
 
     def _discard_rephrased_pending_learning(self, text: str, session_id: str) -> int:
         normalized = " ".join(text.casefold().split())
