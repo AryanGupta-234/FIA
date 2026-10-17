@@ -694,27 +694,11 @@ class AgentRuntime:
         self, text: str, args: dict[str, Any] | None = None, *,
         execute: bool | None = None, confirmed: bool = False, session_id: str = "local-session",
     ) -> dict[str, Any]:
-        async with self.ollama.request_budget(
-            self.settings.agent_max_model_tokens,
-        ) as budget:
-            result = await self._run_request(
-                text, args, execute=execute, confirmed=confirmed, session_id=session_id,
-            )
-            result["model_budget"] = {
-                "limit": budget["limit"],
-                "used": budget["used"],
-                "remaining": max(0, budget["limit"] - budget["used"]),
-            }
-            return result
-
-    async def _run_request(
-        self, text: str, args: dict[str, Any] | None = None, *,
-        execute: bool | None = None, confirmed: bool = False, session_id: str = "local-session",
-    ) -> dict[str, Any]:
         self._discard_rephrased_pending_learning(text, session_id)
         matching_macro = self.matching_approved_macro(text)
         if matching_macro is not None:
-            macro_execute = bool(execute)
+            # A macro is already owner-approved, parameterized and restricted to safe actions.
+            macro_execute = execute is None or bool(execute)
             macro_preview = await self.preview(text)
             macro_action = self.registry.get(str(macro_preview.get("action") or ""))
             if (
@@ -736,8 +720,24 @@ class AgentRuntime:
             )
         clauses = self.split_compound(text)
         if len(clauses) > 1:
+            compound_execute = bool(execute)
+            if execute is None:
+                # Autonomous compound execution is allowed only when every clause has
+                # a deterministic, unambiguous L1/L2 action candidate.
+                clause_routes = [
+                    IntentRouter(self.registry, self.store).route(clause)
+                    for clause in clauses
+                ]
+                compound_execute = bool(clause_routes) and all(
+                    route.status == "selected"
+                    and route.selected_action is not None
+                    and (candidate := self.registry.get(route.selected_action)) is not None
+                    and candidate.risk in {RiskTier.READ_ONLY, RiskTier.REVERSIBLE}
+                    and not candidate.sensitive_output
+                    for route in clause_routes
+                )
             return await self._run_compound(
-                text, clauses, args or {}, execute=bool(execute),
+                text, clauses, args or {}, execute=compound_execute,
                 confirmed=confirmed, session_id=session_id,
             )
         preview = await self.preview(text, trusted_args=args or {})
@@ -757,7 +757,7 @@ class AgentRuntime:
         if action is None:
             return {"status": "rejected", "reason": "unknown_action"}
         if execute is None:
-            execute = action.risk == RiskTier.READ_ONLY
+            execute = action.risk in {RiskTier.READ_ONLY, RiskTier.REVERSIBLE}
         for slot in action.required_slots:
             if merged_args.get(slot) in (None, ""):
                 return {"status": "clarify", "clarification": f"What {slot} should I use?"}
