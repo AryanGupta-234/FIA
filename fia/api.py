@@ -24,6 +24,7 @@ from fia.models import (
 from fia.research import create_job, schedule_research
 from fia.schemas import PreferenceUpdate, ResearchRequest, SavedSearchCreate, SavedSearchUpdate
 from fia.services.freshness import price_freshness
+from prixon.api import router as prixon_router
 
 settings = get_settings()
 
@@ -106,6 +107,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
+app.include_router(prixon_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
