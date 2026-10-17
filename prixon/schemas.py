@@ -107,6 +107,7 @@ class GoalCreateRequest(BaseModel):
     description: str = Field(min_length=1, max_length=500)
     priority: int = Field(default=50, ge=0, le=100)
     plan: AgentPlan | None = None
+    confirmed: bool = False
 
 
 class GoalStatusRequest(BaseModel):
