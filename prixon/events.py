@@ -260,12 +260,14 @@ class WinProcessTerminationObserver:
                 except pythoncom.com_error:
                     continue
                 try:
-                    payload = self.classify_stop(
+                    event_type, payload = self.classify_stop(
                         str(event.ProcessName),
                         int(event.ProcessID),
                         int(event.ExitStatus),
                     )
-                    self.bus.publish(payload[0], payload[1])
+                    # The psutil observer already emits normal stop events; WMI adds crash classification.
+                    if event_type == "process_crashed":
+                        self.bus.publish(event_type, payload)
                 except (AttributeError, TypeError, ValueError):
                     continue
         except Exception:
