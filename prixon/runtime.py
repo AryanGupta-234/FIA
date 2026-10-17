@@ -348,13 +348,17 @@ class AgentRuntime:
                 return args, prompt
             args["application"] = mention
             if action_name == "app.launch":
+                entity_context = self.alias_context()
+                if foreground and foreground.get("title"):
+                    entity_context["foreground_app"] = str(foreground["title"]).casefold()
                 entity = self.index.resolve(
-                    mention, "application",
-                    context={"foreground_app": (foreground or {}).get("title")},
+                    mention, "application", context=entity_context,
                 )
                 if not entity:
                     self.refresh_entities()
-                    entity = self.index.resolve(mention, "application")
+                    entity = self.index.resolve(
+                        mention, "application", context=self.alias_context(),
+                    )
                 if not entity:
                     return args, f"I couldn't ground '{mention}' to an installed Start Menu application."
                 args["application_target"] = entity["target"]
@@ -496,20 +500,6 @@ class AgentRuntime:
         })
 
     async def preview(
-        self, text: str, *, trusted_args: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        async with self.ollama.request_budget(
-            self.settings.agent_max_model_tokens,
-        ) as budget:
-            result = await self._preview(text, trusted_args=trusted_args)
-            result["model_budget"] = {
-                "limit": budget["limit"],
-                "used": budget["used"],
-                "remaining": max(0, budget["limit"] - budget["used"]),
-            }
-            return result
-
-    async def _preview(
         self, text: str, *, trusted_args: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         async with self.ollama.request_budget(
