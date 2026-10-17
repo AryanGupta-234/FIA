@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 from prixon.confidence import DecisionSignals, fuse_confidence, meets_risk_threshold
@@ -73,6 +74,8 @@ class AgentRuntime:
                 logger.exception("Semantic retrieval unavailable; deterministic path remains active")
         self._suggestions: list[dict[str, Any]] = []
         self._loop = None
+        self._entity_refresh_at = 0.0
+        self._entity_refresh_result = {"applications": 0, "processes": 0, "windows": 0}
         self._register_approved_macros()
 
     def _register_approved_macros(self) -> None:
@@ -170,7 +173,9 @@ class AgentRuntime:
         )
         return {"status": result["status"], "macro": macro["name"], "execution": result}
 
-    def refresh_entities(self) -> dict[str, int]:
+    def refresh_entities(self, force: bool = True) -> dict[str, int]:
+        if not force and time.monotonic() - self._entity_refresh_at < 15:
+            return dict(self._entity_refresh_result)
         apps = self.perception.installed_apps()
         app_count = self.index.refresh("application", apps)
         processes = self.perception.processes(limit=1000)
@@ -190,7 +195,11 @@ class AgentRuntime:
                 "kind": "window", "name": foreground["title"],
                 "target": str(foreground["handle"]), "hwnd": foreground["handle"],
             })
-        return {"applications": app_count, "processes": process_count, "windows": window_count}
+        self._entity_refresh_at = time.monotonic()
+        self._entity_refresh_result = {
+            "applications": app_count, "processes": process_count, "windows": window_count,
+        }
+        return dict(self._entity_refresh_result)
 
     def situation(self) -> dict[str, Any]:
         snapshot = self.perception.snapshot()
@@ -224,7 +233,15 @@ class AgentRuntime:
         if action_name in {"app.launch", "app.is_running"}:
             mention = str(args.get("application") or "")
             if not mention:
-                match = re.search(r"\b(?:open|launch|start|fire up)\s+(.+?)(?:\s+please)?$", text, re.I)
+                if action_name == "app.launch":
+                    match = re.search(
+                        r"\b(?:open|launch|start|fire up)\s+(.+?)(?:\s+please)?$", text, re.I,
+                    )
+                else:
+                    match = re.search(
+                        r"\b(?:is|check if|whether)\s+(.+?)\s+(?:is\s+)?(?:running|open|active)\b",
+                        text, re.I,
+                    )
                 mention = match.group(1).strip(" .") if match else ""
             if not mention:
                 return args, "Which installed application should I open?"
@@ -267,19 +284,20 @@ class AgentRuntime:
         return args, None
 
     def _shortlist(self, route) -> list[dict[str, Any]]:
+        # Arbitration is only permitted when deterministic retrieval has grounded candidates.
         actions = [candidate.action for candidate in route.candidates[:5]]
-        if not actions:
-            actions = self.registry.all()[:5]
         return [
             {"name": action.name, "description": action.description,
              "examples": list(action.examples[:3]),
-             "required_slots": list(action.required_slots), "risk": action.risk.value}
+             "required_slots": list(action.required_slots),
+             "risk": action.risk.value,
+             "hard_negatives": list(action.hard_negatives[:3])}
             for action in actions
         ]
 
     async def preview(self, text: str) -> dict[str, Any]:
         self._register_approved_macros()
-        self.refresh_entities()
+        self.refresh_entities(force=False)
         normalized = " ".join(text.casefold().split())
         alias_used = False
         # Only user-taught aliases are eligible for direct substitution.
@@ -326,9 +344,24 @@ class AgentRuntime:
                     )
                     action = self.registry.get(str(arbitration.get("action")))
                     if action:
+                        confidence_hint = float(arbitration.get("confidence", 0))
+                        if confidence_hint < 0.65:
+                            second = await self.ollama.arbitrate(
+                                text, tools, self.situation(), self.store.recent_episodes(3),
+                                temperature=0.1,
+                            )
+                            if second.get("action") != arbitration.get("action"):
+                                return {
+                                    "status": "clarify",
+                                    "reason": "low_confidence_self_consistency_disagreement",
+                                    "candidates": [candidate.model_dump(mode="json") for candidate in route.candidates],
+                                    "clarification": "Two local interpretations disagreed. Please clarify which action you intended.",
+                                }
+                            confidence_hint = min(confidence_hint, float(second.get("confidence", 0)))
+                            arbitration["confidence"] = confidence_hint
                         route.status = "selected"
                         route.selected_action = action.name
-                        route.confidence = float(arbitration.get("confidence", 0))
+                        route.confidence = confidence_hint
                         route.reason = "local_ollama_shortlist_arbitration"
                         route.slots = dict(arbitration.get("args") or {})
                 except Exception as exc:
@@ -349,7 +382,10 @@ class AgentRuntime:
         grounded = sum(1 for slot in action.required_slots if args.get(slot) not in (None, ""))
         slot_score = grounded / len(action.required_slots) if action.required_slots else 1.0
         candidate_scores = [candidate.score for candidate in route.candidates]
-        margin = max(0.0, candidate_scores[0] - candidate_scores[1]) if len(candidate_scores) > 1 else max(route.confidence, 0.85)
+        margin = (
+            max(0.0, candidate_scores[0] - candidate_scores[1])
+            if len(candidate_scores) > 1 else candidate_scores[0] if candidate_scores else 0.0
+        )
         llm_score = float(arbitration.get("confidence", 0)) if arbitration else 0.0
         foreground = self.situation().get("foreground_app")
         confidence = fuse_confidence(DecisionSignals(
@@ -371,10 +407,26 @@ class AgentRuntime:
             "model_metrics": self.ollama.last_metrics,
         }
 
+    def matching_approved_macro(self, text: str) -> int | None:
+        normalized = " ".join(text.casefold().split())
+        matches: list[tuple[int, int]] = []
+        for macro in self.store.macros(approved=True):
+            for phrase in macro["trigger_phrases"]:
+                candidate = " ".join(str(phrase).casefold().split())
+                if candidate and (candidate == normalized or candidate in normalized):
+                    matches.append((len(candidate), int(macro["id"])))
+        return max(matches)[1] if matches else None
+
     async def run_request(
         self, text: str, args: dict[str, Any] | None = None, *,
         execute: bool = False, confirmed: bool = False, session_id: str = "local-session",
     ) -> dict[str, Any]:
+        matching_macro = self.matching_approved_macro(text)
+        if matching_macro is not None:
+            return await self.run_macro(
+                matching_macro, args or {}, execute=execute,
+                confirmed=confirmed, session_id=session_id,
+            )
         clauses = self.split_compound(text)
         if len(clauses) > 1:
             return await self._run_compound(
@@ -460,11 +512,28 @@ class AgentRuntime:
         execute: bool, confirmed: bool, session_id: str,
     ) -> dict[str, Any]:
         situation = self.situation()
+        clause_routes = [IntentRouter(self.registry).route(clause) for clause in clauses]
+        if any(not route.candidates for route in clause_routes):
+            return {
+                "status": "clarify", "reason": "compound_clause_not_grounded",
+                "clarification": "I could not retrieve a registered action for every part of that request.",
+                "clauses": [
+                    {"text": clause, "status": route.status, "reason": route.reason}
+                    for clause, route in zip(clauses, clause_routes, strict=True)
+                ],
+            }
+        shortlist_by_name: dict[str, Any] = {}
+        for route in clause_routes:
+            candidates = route.candidates[:2] if route.status == "clarify" else route.candidates[:1]
+            for candidate in candidates:
+                shortlist_by_name.setdefault(candidate.action.name, candidate.action)
+        actions = list(shortlist_by_name.values())[:5]
         tools = [
             {"name": item.name, "description": item.description,
              "required_slots": list(item.required_slots), "risk": item.risk.value,
-             "examples": list(item.examples[:3])}
-            for item in self.registry.all()
+             "examples": list(item.examples[:3]),
+             "hard_negatives": list(item.hard_negatives[:3])}
+            for item in actions
         ]
         try:
             model_plan = await self.ollama.create_plan(
@@ -493,21 +562,33 @@ class AgentRuntime:
             if action is None:
                 return {"status": "rejected", "reason": "unknown_tool", "tool": step.tool}
             route = IntentRouter(self.registry).route(clauses[index])
-            if route.status != "selected" or route.selected_action != step.tool:
+            retrieved_names = {candidate.action.name for candidate in route.candidates[:5]}
+            if (
+                (route.status == "selected" and route.selected_action != step.tool)
+                or (route.status == "clarify" and step.tool not in retrieved_names)
+            ):
                 return {
                     "status": "clarify", "reason": "planner_and_reflex_disagree",
                     "clause": clauses[index], "planned_action": step.tool,
                     "reflex_action": route.selected_action,
-                    "clarification": "The plan does not agree with deterministic intent retrieval.",
+                    "clarification": "The plan selected an action outside the grounded candidate set.",
                 }
             grounded = sum(1 for slot in action.required_slots if step.args.get(slot) not in (None, ""))
             slot_score = grounded / len(action.required_slots) if action.required_slots else 1.0
             scores = [candidate.score for candidate in route.candidates]
-            margin = max(0.0, scores[0] - scores[1]) if len(scores) > 1 else (scores[0] if scores else route.confidence)
+            chosen_score = next(
+                (candidate.score for candidate in route.candidates if candidate.action.name == step.tool),
+                0.0,
+            )
+            remaining = sorted(
+                (candidate.score for candidate in route.candidates if candidate.action.name != step.tool),
+                reverse=True,
+            )
+            margin = max(0.0, chosen_score - (remaining[0] if remaining else 0.0))
             step.confidence = fuse_confidence(DecisionSignals(
                 retrieval_margin=margin,
                 slot_grounding=slot_score,
-                llm_confidence=0.0,
+                llm_confidence=float(step.confidence),
                 context_prior=1.0 if situation.get("foreground_app") else 0.5,
                 user_lexicon_hit=0.0,
             ))
