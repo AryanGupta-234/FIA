@@ -22,9 +22,12 @@ class OwnerLexicon:
         self.store = store
         self.promotion_threshold = promotion_threshold
 
-    def teach(self, phrase: str, action_name: str) -> LearningResult:
+    def teach(
+        self, phrase: str, action_name: str, scope: dict | None = None,
+    ) -> LearningResult:
         self.store.put_alias(
-            phrase, "action", action_name, confidence=1.0, explicit=True,
+            phrase, "action", action_name, scope=scope,
+            confidence=1.0, explicit=True,
         )
         self.store.audit("alias_explicitly_taught", {"phrase": phrase, "target": action_name})
         return LearningResult("promoted", phrase, action_name, 1.0, 1)
@@ -42,10 +45,14 @@ class OwnerLexicon:
             "phrase": phrase, "entity_type": entity_type, "target": target,
         })
 
-    def correct(self, phrase: str, wrong_action: str, corrected_action: str) -> LearningResult:
+    def correct(
+        self, phrase: str, wrong_action: str, corrected_action: str,
+        scope: dict | None = None,
+    ) -> LearningResult:
         self.store.add_negative_example(phrase, wrong_action)
         self.store.put_alias(
-            phrase, "action", corrected_action, confidence=0.9, explicit=True,
+            phrase, "action", corrected_action, scope=scope,
+            confidence=0.9, explicit=True,
         )
         self.store.audit("owner_corrected_action", {
             "phrase": phrase, "wrong_action": wrong_action,
@@ -95,6 +102,7 @@ class OwnerLexicon:
 
     def approve_candidate(
         self, phrase: str, action_name: str, risk: RiskTier,
+        scope: dict | None = None,
     ) -> LearningResult:
         stats = next(
             (row for row in self.store.alias_candidates()
@@ -110,7 +118,8 @@ class OwnerLexicon:
             raise ValueError("Candidate has not met the promotion evidence threshold.")
         # This method is called only from the confirmation-gated owner approval endpoint.
         self.store.put_alias(
-            phrase, "action", action_name, confidence=confidence, explicit=True,
+            phrase, "action", action_name, scope=scope,
+            confidence=confidence, explicit=True,
         )
         self.store.remove_alias_candidate(phrase, action_name)
         self.store.audit("owner_approved_learning_candidate", {

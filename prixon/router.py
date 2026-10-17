@@ -93,7 +93,9 @@ class IntentRouter:
         self.registry = registry or ActionRegistry()
         self.store = store
 
-    def route(self, utterance: str) -> RouteResult:
+    def route(
+        self, utterance: str, *, context: dict | None = None,
+    ) -> RouteResult:
         normalized = normalize(utterance)
         intent_class = classify(normalized)
         if not normalized:
@@ -104,9 +106,13 @@ class IntentRouter:
 
         candidates: list[Candidate] = []
         owner_aliases = self.store.aliases() if self.store is not None else []
+        applicable_aliases = [
+            alias for alias in owner_aliases
+            if self.store.scope_matches(alias.get("scope") or {}, context)
+        ]
         for action in self.registry.by_class(intent_class):
             action_aliases = [
-                alias["phrase"] for alias in owner_aliases
+                alias["phrase"] for alias in applicable_aliases
                 if alias["target_type"] == "action" and alias["target"] == action.name
             ]
             if (

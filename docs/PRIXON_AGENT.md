@@ -37,10 +37,15 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 
 ### Learning
 - Multi-session success/failure evidence with decay.
-- Explicit owner teaching and correction-driven negative memory.
-- Context-scoped entity aliases.
+- Explicit owner teaching, direct clarification-answer learning and correction-driven negative memory.
+- Multiple action and entity meanings can coexist under foreground-app, time-of-day, weekday or hour scopes; the most specific matching scope wins.
+- Context-scoped entity aliases are grounded against live entities before use.
 - Nightly consolidation and repeated plan-shape macro proposals.
 - Approved macros become registry actions.
+
+### Clarification-answer API
+
+Use `POST /api/v1/agent/learning/clarification-answer` when the owner answers a Prixon clarification. Supply either `action_name` or both `entity_type` and `target`, plus an optional scope. The direct owner answer is treated as explicit teaching; observed screen, file, page or tool output is never used as a teaching signal.
 
 ### Evaluation/performance
 - Frozen + growing JSONL intent benchmark, including wrong-selection rate separately from safe abstention.

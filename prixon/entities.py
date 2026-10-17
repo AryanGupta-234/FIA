@@ -95,7 +95,7 @@ class EntityIndex:
         query = " ".join(mention.casefold().split())
         if not query:
             return None
-        alias = self.store.alias(query)
+        alias = self.store.alias(query, context=context)
         if alias and (kind is None or alias["target_type"] == kind):
             alias_scope = alias.get("scope") or {}
             scope_matches = all(

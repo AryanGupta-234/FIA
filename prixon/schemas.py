@@ -103,9 +103,18 @@ class RunRequest(BaseModel):
 
 
 class TeachAliasRequest(BaseModel):
-    phrase: str = Field(min_length=2, max_length=100)
+    phrase: str = Field(min_length=2, max_length=180)
     action_name: str = Field(min_length=2, max_length=100)
+    scope: dict[str, Any] = Field(default_factory=dict)
     confirmed: bool = False
+
+
+class ClarificationAnswerRequest(BaseModel):
+    phrase: str = Field(min_length=2, max_length=180)
+    action_name: str | None = Field(default=None, min_length=2, max_length=100)
+    entity_type: str | None = None
+    target: str | None = Field(default=None, min_length=1, max_length=500)
+    scope: dict[str, Any] = Field(default_factory=dict)
 
 
 class GoalCreateRequest(BaseModel):
@@ -120,10 +129,11 @@ class GoalStatusRequest(BaseModel):
 
 
 class AliasFeedbackRequest(BaseModel):
-    phrase: str = Field(min_length=2, max_length=100)
+    phrase: str = Field(min_length=2, max_length=180)
     action_name: str = Field(min_length=2, max_length=100)
     success: bool
     corrected_action: str | None = Field(default=None, min_length=2, max_length=100)
+    scope: dict[str, Any] = Field(default_factory=dict)
     session_id: str = "local-session"
 
 
@@ -175,6 +185,7 @@ class RoutineStatusRequest(BaseModel):
 
 
 class LearningCandidateRequest(BaseModel):
-    phrase: str = Field(min_length=2, max_length=100)
+    phrase: str = Field(min_length=2, max_length=180)
     action_name: str = Field(min_length=2, max_length=100)
+    scope: dict[str, Any] = Field(default_factory=dict)
     confirmed: bool = False

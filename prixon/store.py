@@ -49,13 +49,15 @@ class AgentStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_entities_kind_name ON entities(kind, normalized);
                 CREATE TABLE IF NOT EXISTS aliases (
-                    phrase TEXT PRIMARY KEY,
+                    phrase TEXT NOT NULL,
+                    scope_key TEXT NOT NULL DEFAULT '{}',
                     target_type TEXT NOT NULL,
                     target TEXT NOT NULL,
                     scope_json TEXT NOT NULL DEFAULT '{}',
                     confidence REAL NOT NULL DEFAULT 1.0,
                     explicit INTEGER NOT NULL DEFAULT 0,
-                    last_used REAL NOT NULL
+                    last_used REAL NOT NULL,
+                    PRIMARY KEY(phrase, scope_key)
                 );
                 CREATE TABLE IF NOT EXISTS alias_candidates (
                     phrase TEXT NOT NULL,
@@ -178,6 +180,43 @@ class AgentStore:
                 );
                 CREATE INDEX IF NOT EXISTS ix_world_state_captured ON world_state(captured_at DESC);
             """)
+            alias_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(aliases)").fetchall()
+            }
+            if "scope_key" not in alias_columns:
+                legacy_aliases = db.execute("SELECT * FROM aliases").fetchall()
+                db.execute("ALTER TABLE aliases RENAME TO aliases_legacy_v1")
+                db.execute("""
+                    CREATE TABLE aliases (
+                        phrase TEXT NOT NULL,
+                        scope_key TEXT NOT NULL DEFAULT '{}',
+                        target_type TEXT NOT NULL,
+                        target TEXT NOT NULL,
+                        scope_json TEXT NOT NULL DEFAULT '{}',
+                        confidence REAL NOT NULL DEFAULT 1.0,
+                        explicit INTEGER NOT NULL DEFAULT 0,
+                        last_used REAL NOT NULL,
+                        PRIMARY KEY(phrase, scope_key)
+                    )
+                """)
+                for row in legacy_aliases:
+                    raw_scope = json.loads(row["scope_json"] or "{}")
+                    scope_json = json.dumps(raw_scope, ensure_ascii=False, sort_keys=True)
+                    scope_key = json.dumps(
+                        raw_scope, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                    )
+                    db.execute(
+                        """INSERT INTO aliases(
+                               phrase,scope_key,target_type,target,scope_json,
+                               confidence,explicit,last_used
+                           ) VALUES(?,?,?,?,?,?,?,?)""",
+                        (
+                            row["phrase"], scope_key, row["target_type"], row["target"],
+                            scope_json, row["confidence"], row["explicit"], row["last_used"],
+                        ),
+                    )
+                db.execute("DROP TABLE aliases_legacy_v1")
+
             undo_columns = {
                 row["name"] for row in db.execute("PRAGMA table_info(undo_journal)").fetchall()
             }
@@ -489,27 +528,73 @@ class AgentStore:
         explicit: bool = False,
     ) -> None:
         normalized = " ".join(phrase.casefold().split())
+        scope_value = dict(scope or {})
+        scope_json = json.dumps(scope_value, ensure_ascii=False, sort_keys=True)
+        scope_key = json.dumps(
+            scope_value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        )
         with self.connect() as db:
             db.execute(
-                """INSERT INTO aliases(phrase,target_type,target,scope_json,confidence,explicit,last_used)
-                   VALUES(?,?,?,?,?,?,?)
-                   ON CONFLICT(phrase) DO UPDATE SET target_type=excluded.target_type,
-                   target=excluded.target,scope_json=excluded.scope_json,
-                   confidence=excluded.confidence,explicit=excluded.explicit,last_used=excluded.last_used""",
-                (normalized, target_type, target, json.dumps(scope or {}),
-                 confidence, int(explicit), time.time()),
+                """INSERT INTO aliases(
+                       phrase,scope_key,target_type,target,scope_json,confidence,explicit,last_used
+                   ) VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(phrase,scope_key) DO UPDATE SET
+                   target_type=excluded.target_type,target=excluded.target,
+                   scope_json=excluded.scope_json,confidence=excluded.confidence,
+                   explicit=excluded.explicit,last_used=excluded.last_used""",
+                (
+                    normalized, scope_key, target_type, target, scope_json,
+                    confidence, int(explicit), time.time(),
+                ),
             )
 
-    def alias(self, phrase: str) -> dict[str, Any] | None:
+    @staticmethod
+    def scope_matches(scope: dict[str, Any], context: dict[str, Any] | None) -> bool:
+        if not scope:
+            return True
+        if not context:
+            return False
+        for key, expected in scope.items():
+            actual = context.get(key)
+            if isinstance(expected, list):
+                if actual not in expected:
+                    return False
+            elif isinstance(expected, str) and isinstance(actual, str):
+                if " ".join(expected.casefold().split()) != " ".join(actual.casefold().split()):
+                    return False
+            elif actual != expected:
+                return False
+        return True
+
+    def alias(
+        self, phrase: str, context: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         normalized = " ".join(phrase.casefold().split())
         with self.connect() as db:
-            row = db.execute("SELECT * FROM aliases WHERE phrase=?", (normalized,)).fetchone()
-            if row is None:
+            rows = db.execute(
+                "SELECT * FROM aliases WHERE phrase=? ORDER BY last_used DESC",
+                (normalized,),
+            ).fetchall()
+            matches = [
+                row for row in rows
+                if self.scope_matches(json.loads(row["scope_json"] or "{}"), context)
+            ]
+            if not matches:
                 return None
-            db.execute("UPDATE aliases SET last_used=? WHERE phrase=?", (time.time(), normalized))
-            return {"phrase": row["phrase"], "target_type": row["target_type"],
-                    "target": row["target"], "scope": json.loads(row["scope_json"]),
-                    "confidence": row["confidence"], "explicit": bool(row["explicit"])}
+            row = max(
+                matches,
+                key=lambda item: len(json.loads(item["scope_json"] or "{}")),
+            )
+            scope = json.loads(row["scope_json"] or "{}")
+            db.execute(
+                "UPDATE aliases SET last_used=? WHERE phrase=? AND scope_key=?",
+                (time.time(), normalized, row["scope_key"]),
+            )
+            return {
+                "phrase": row["phrase"], "target_type": row["target_type"],
+                "target": row["target"], "scope": scope,
+                "confidence": row["confidence"], "explicit": bool(row["explicit"]),
+            }
 
     def observe_alias(
         self, phrase: str, target: str, success: bool, session_id: str,
@@ -546,10 +631,22 @@ class AgentStore:
             return {"phrase": normalized, "target": target, "successes": successes,
                     "failures": failures, "sessions": sessions, "confidence": posterior}
 
-    def remove_alias(self, phrase: str) -> None:
+    def remove_alias(
+        self, phrase: str, scope: dict[str, Any] | None = None,
+    ) -> int:
         normalized = " ".join(phrase.casefold().split())
         with self.connect() as db:
-            db.execute("DELETE FROM aliases WHERE phrase=?", (normalized,))
+            if scope is None:
+                cursor = db.execute("DELETE FROM aliases WHERE phrase=?", (normalized,))
+            else:
+                scope_key = json.dumps(
+                    dict(scope), ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+                )
+                cursor = db.execute(
+                    "DELETE FROM aliases WHERE phrase=? AND scope_key=?",
+                    (normalized, scope_key),
+                )
+            return int(cursor.rowcount)
 
     def remove_alias_if_implicit(self, phrase: str) -> bool:
         normalized = " ".join(phrase.casefold().split())

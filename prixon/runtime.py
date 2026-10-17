@@ -419,6 +419,23 @@ class AgentRuntime:
                 return args, "Specify the exact file path to quarantine."
         return args, None
 
+    def alias_context(self) -> dict[str, Any]:
+        now = datetime.now().astimezone()
+        snapshot = self.perception.snapshot()
+        foreground = snapshot.get("foreground_window") or {}
+        return {
+            "foreground_app": str(
+                foreground.get("title") or foreground.get("process") or ""
+            ).casefold(),
+            "hour": now.hour,
+            "weekday": now.strftime("%A").casefold(),
+            "time_of_day": (
+                "morning" if 5 <= now.hour < 12 else
+                "afternoon" if 12 <= now.hour < 17 else
+                "evening" if 17 <= now.hour < 22 else "night"
+            ),
+        }
+
     def _shortlist(self, route) -> list[dict[str, Any]]:
         # Arbitration is only permitted when deterministic retrieval has grounded candidates.
         actions = [candidate.action for candidate in route.candidates[:5]]
@@ -513,7 +530,7 @@ class AgentRuntime:
         self.refresh_entities(force=False)
         normalized = " ".join(text.casefold().split())
         alias_used = False
-        route = IntentRouter(self.registry, self.store).route(normalized)
+        route = IntentRouter(self.registry, self.store).route(normalized, context=self.alias_context())
         arbitration: dict[str, Any] | None = None
         if route.status != "selected" and self.semantic is not None:
             try:
@@ -621,10 +638,12 @@ class AgentRuntime:
                 "candidates": [candidate.model_dump(mode="json") for candidate in route.candidates],
             }
 
+        current_alias_context = self.alias_context()
         alias_used = any(
             alias["target_type"] == "action"
             and alias["target"] == action.name
             and alias["phrase"] in normalized
+            and self.store.scope_matches(alias.get("scope") or {}, current_alias_context)
             for alias in self.store.aliases()
         ) or action.name.startswith("macro.")
         args, clarification = self._fill_args(
@@ -732,7 +751,7 @@ class AgentRuntime:
                 # Autonomous compound execution is allowed only when every clause has
                 # a deterministic, unambiguous L1/L2 action candidate.
                 clause_routes = [
-                    IntentRouter(self.registry, self.store).route(clause)
+                    IntentRouter(self.registry, self.store).route(clause, context=self.alias_context())
                     for clause in clauses
                 ]
                 compound_execute = bool(clause_routes) and all(
@@ -848,7 +867,7 @@ class AgentRuntime:
         self, original: str, clauses: list[str], args: dict[str, Any], *,
         execute: bool, confirmed: bool, session_id: str,
     ) -> dict[str, Any]:
-        clause_routes = [IntentRouter(self.registry, self.store).route(clause) for clause in clauses]
+        clause_routes = [IntentRouter(self.registry, self.store).route(clause, context=self.alias_context()) for clause in clauses]
         if any(not route.candidates for route in clause_routes):
             return {
                 "status": "clarify", "reason": "compound_clause_not_grounded",
@@ -921,7 +940,7 @@ class AgentRuntime:
                 return {"status": "clarify", "clarification": clarification,
                         "plan": plan.model_dump(mode="json")}
             step.args = enriched
-            route = IntentRouter(self.registry, self.store).route(clauses[index])
+            route = IntentRouter(self.registry, self.store).route(clauses[index], context=self.alias_context())
             retrieved_names = {candidate.action.name for candidate in route.candidates[:5]}
             if (
                 (route.status == "selected" and route.selected_action != step.tool)
@@ -1061,7 +1080,7 @@ class AgentRuntime:
         original = self.registry.get(failed_action)
         if original is None:
             return {"performed": False, "reason": "failed_action_not_registered"}
-        route = IntentRouter(self.registry, self.store).route(text)
+        route = IntentRouter(self.registry, self.store).route(text, context=self.alias_context())
         rank = self._risk_rank(original.risk)
         candidates = []
         for candidate in route.candidates:

@@ -30,6 +30,7 @@ from prixon.schemas import (
     RoutineStatusRequest,
     RunRequest,
     TeachAliasRequest,
+    ClarificationAnswerRequest,
 )
 
 router = APIRouter(prefix="/api/v1/agent", tags=["Prixon Agent"])
@@ -102,7 +103,7 @@ def teach_action_alias(payload: TeachAliasRequest) -> dict[str, Any]:
     action = runtime.registry.get(payload.action_name)
     if action is None:
         raise HTTPException(404, "Unknown registered action.")
-    result = runtime.lexicon.teach(payload.phrase, payload.action_name)
+    result = runtime.lexicon.teach(payload.phrase, payload.action_name, scope=payload.scope)
     return {
         "status": result.status,
         "phrase": result.phrase,
@@ -129,6 +130,43 @@ def teach_entity_alias(payload: EntityAliasRequest) -> dict[str, Any]:
     return {"status": "learned", "phrase": payload.phrase, "entity_type": payload.entity_type}
 
 
+@router.post("/learning/clarification-answer")
+def record_clarification_answer(payload: ClarificationAnswerRequest) -> dict[str, Any]:
+    """Treat an owner's direct clarification response as a strong learning signal."""
+    if payload.action_name:
+        if payload.entity_type or payload.target:
+            raise HTTPException(422, "Choose an action mapping or an entity mapping, not both.")
+        if runtime.registry.get(payload.action_name) is None:
+            raise HTTPException(404, "Unknown registered action.")
+        result = runtime.lexicon.teach(
+            payload.phrase, payload.action_name, scope=payload.scope,
+        )
+        runtime.store.audit("owner_answered_action_clarification", {
+            "phrase": payload.phrase, "action": payload.action_name,
+            "scope": payload.scope,
+        })
+        return {
+            "status": result.status, "phrase": result.phrase,
+            "action": result.target, "confidence": result.confidence,
+        }
+    if not payload.entity_type or not payload.target:
+        raise HTTPException(422, "Provide action_name or both entity_type and target.")
+    try:
+        runtime.lexicon.teach_entity(
+            payload.phrase, payload.entity_type, payload.target, payload.scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    runtime.store.audit("owner_answered_entity_clarification", {
+        "phrase": payload.phrase, "entity_type": payload.entity_type,
+        "target": payload.target, "scope": payload.scope,
+    })
+    return {
+        "status": "learned", "phrase": payload.phrase,
+        "entity_type": payload.entity_type, "target": payload.target,
+    }
+
+
 @router.post("/learning/feedback")
 def record_owner_feedback(payload: AliasFeedbackRequest) -> dict[str, Any]:
     action = runtime.registry.get(payload.action_name)
@@ -140,6 +178,7 @@ def record_owner_feedback(payload: AliasFeedbackRequest) -> dict[str, Any]:
             raise HTTPException(404, "Unknown corrected action.")
         result = runtime.lexicon.correct(
             payload.phrase, payload.action_name, payload.corrected_action,
+            scope=payload.scope,
         )
     else:
         result = runtime.lexicon.observe(
@@ -219,7 +258,7 @@ def approve_learning_candidate(payload: LearningCandidateRequest) -> dict[str, A
         raise HTTPException(404, "Unknown registered action.")
     try:
         result = runtime.lexicon.approve_candidate(
-            payload.phrase, payload.action_name, action.risk,
+            payload.phrase, payload.action_name, action.risk, scope=payload.scope,
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
