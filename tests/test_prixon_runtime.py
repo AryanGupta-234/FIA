@@ -240,3 +240,36 @@ def test_explicit_correction_creates_positive_alias_and_negative_example(store):
     assert corrected.status == "corrected"
     assert store.alias("check spotify")["target"] == "app.is_running"
     assert store.negative_examples()[0]["action_name"] == "process.list"
+
+
+def test_reflex_queries_cover_ram_battery_wifi_and_cpu():
+    router = IntentRouter()
+    assert router.route("show RAM usage").selected_action == "system.memory"
+    assert router.route("check battery").selected_action == "system.battery"
+    assert router.route("is wifi connected").selected_action == "system.wifi"
+    assert router.route("show cpu load").selected_action == "system.cpu"
+
+
+def test_volume_control_phrase_is_not_misclassified_as_a_query():
+    router = IntentRouter()
+    assert router.route("turn volume down to 20").selected_action == "volume.set"
+    assert router.route("volume at 50").selected_action == "volume.set"
+
+
+def test_learning_signal_waits_for_delayed_owner_success(store):
+    signal_id = store.queue_learning_signal(
+        "fire up notepad", "app.launch", "session-a", "reversible", "undo-id",
+    )
+    pending = store.pending_learning_signals()
+    assert len(pending) == 1 and pending[0]["id"] == signal_id
+    store.discard_pending_learning(undo_id="undo-id")
+    assert store.pending_learning_signals() == []
+
+
+def test_learning_reset_removes_macros_and_pending_signals(store):
+    store.record_macro("shape", "Routine", {"steps": []}, "do routine")
+    store.queue_learning_signal("open app", "app.launch", "session", "reversible")
+    removed = store.remove_all_user_learning()
+    assert removed["macros"] == 1
+    assert removed["pending_learning"] == 1
+    assert store.pending_learning_signals() == []
