@@ -25,6 +25,9 @@ def validate_plan(
         for slot in action.required_slots:
             if slot not in step.args or step.args[slot] in (None, ""):
                 errors.append(f"required_slot_missing:{index}:{slot}")
+        unknown_args = set(step.args) - set(action.parameter_schema)
+        if unknown_args:
+            errors.append(f"unknown_arguments:{index}:{','.join(sorted(unknown_args))}")
         if any(
             isinstance(value, str) and value.startswith("$previous.")
             for value in step.args.values()
