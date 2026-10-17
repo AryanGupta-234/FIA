@@ -106,6 +106,7 @@ class OllamaClient:
     async def arbitrate(
         self, utterance: str, tools: list[dict[str, Any]],
         situation: dict[str, Any], recent_episodes: list[dict[str, Any]] | None = None,
+        *, temperature: float = 0.0,
     ) -> dict[str, Any]:
         names = [tool["name"] for tool in tools]
         schema = {
