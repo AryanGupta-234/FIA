@@ -323,3 +323,13 @@ def test_explicit_rephrase_cancels_pending_learning_and_adds_negative(store):
         assert store.negative_examples()[0]["action_name"] == "app.launch"
     finally:
         runtime.executor.shutdown()
+
+
+def test_rules_handle_additional_lookalikes_and_phrasings():
+    router = IntentRouter()
+    assert router.route("is notepad open").selected_action == "app.is_running"
+    assert router.route("give me a pc health summary").selected_action == "system.status"
+    assert router.route("display the process list").selected_action == "process.list"
+    assert router.route("make this window full size").selected_action == "window.maximize"
+    assert router.route("unminimize this window").selected_action == "window.restore"
+    assert router.route("close the current app").selected_action == "window.close"
