@@ -368,10 +368,7 @@ def test_active_goals_are_marked_interrupted_not_replayed(store):
     store.set_goal_status(goal_id, "active")
     loop = AgentLoop(runtime)
     try:
-        import asyncio
-        asyncio.run(loop.start())
+        assert loop.recover_interrupted_goals() == 1
         assert store.goals(("blocked",))[0]["id"] == goal_id
     finally:
-        import asyncio
-        asyncio.run(loop.stop("test_cleanup"))
         runtime.executor.shutdown()
