@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -20,6 +21,14 @@ class OllamaClient:
         timeout_seconds: float = 60.0,
         keep_alive: str = "10m",
     ) -> None:
+        parsed_url = urlsplit(base_url)
+        if (
+            parsed_url.scheme != "http"
+            or parsed_url.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+        ):
+            raise ValueError("Prixon Ollama endpoint must be an unauthenticated HTTP loopback URL.")
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = max(1.0, timeout_seconds)
