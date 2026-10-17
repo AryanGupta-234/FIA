@@ -14,8 +14,10 @@ from prixon.kill_switch import KillSwitch
 class VoiceKillListener:
     """Local Vosk push-to-talk listener for emergency kill and ordinary commands.
 
-    The microphone is opened only after Ctrl+Alt+V or Ctrl+Alt+M. Audio and the
-    recognized transcript are held in memory only; there is no cloud fallback.
+    The microphone is opened only after Ctrl+Alt+V or Ctrl+Alt+M. Raw audio is
+    processed in memory and discarded. Emergency-stop phrases are not persisted;
+    ordinary commands are handed to AgentRuntime and follow its normal owner-request
+    audit and learning policy. There is no cloud fallback.
     """
 
     MOD_ALT = 0x0001
@@ -230,7 +232,7 @@ class VoiceKillListener:
             pythoncom.CoInitialize()
             initialized = True
             speaker = win32com.client.Dispatch("SAPI.SpVoice")
-            speaker.Speak(text[:240], 1)
+            speaker.Speak(text[:240], 0)
         except Exception:
             # Voice output is optional; command execution/status remains available by API.
             return

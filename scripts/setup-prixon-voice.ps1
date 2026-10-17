@@ -41,6 +41,7 @@ try {
     }
     $Values = [ordered]@{
         "PRIXON_VOICE_KILL_ENABLED" = "true"
+        "PRIXON_VOICE_COMMANDS_ENABLED" = "true"
         "PRIXON_VOICE_MODEL_PATH" = $ModelPath
         "PRIXON_VOICE_CAPTURE_SECONDS" = "5"
     }
