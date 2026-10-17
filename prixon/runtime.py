@@ -95,7 +95,14 @@ class AgentRuntime:
 
     def _register_approved_macros(self) -> None:
         from prixon.router import classify
-        for macro in self.store.macros(approved=True):
+        approved_macros = self.store.macros(approved=True)
+        approved_ids = {str(item["id"]) for item in approved_macros}
+        for action in self.registry.all():
+            if action.name.startswith("macro."):
+                macro_id = action.name.split(".", 2)[1]
+                if macro_id not in approved_ids:
+                    self.registry.unregister(action.name)
+        for macro in approved_macros:
             risk_values = [self.registry.get(step["tool"]).risk for step in macro["plan"].get("steps", [])
                            if self.registry.get(step["tool"])]
             risk_order = {
@@ -181,7 +188,7 @@ class AgentRuntime:
                     "plan": plan.model_dump(mode="json")}
         if any(self.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM for step in plan.steps) and not confirmed:
             return {"status": "confirmation_required", "macro": macro["name"]}
-        result = self.executor.execute_plan(plan, confirmed=confirmed)
+        result = self.executor.execute_plan(plan, confirmed=confirmed, session_id=session_id)
         self.store.episode(
             macro["name"], ["macro", "executor", "verifier"],
             plan.model_dump(mode="json"),
@@ -414,7 +421,7 @@ class AgentRuntime:
             and alias["target"] == action.name
             and alias["phrase"] in normalized
             for alias in self.store.aliases()
-        )
+        ) or action.name.startswith("macro.")
         args, clarification = self._fill_args(text=text, action_name=action.name, supplied=route.slots)
         if clarification:
             route.status = "clarify"
@@ -542,6 +549,7 @@ class AgentRuntime:
             }
         result = self.executor.execute_action(
             action_name, merged_args, confirmed=confirmed, confidence=confidence,
+            utterance=text, session_id=session_id,
         )
         outcome = "success" if result.success else "failure"
         self.store.episode(text, ["L0", "L1", "L2"], plan.model_dump(mode="json"), outcome, result.error)
@@ -760,8 +768,11 @@ class AgentRuntime:
             )
         return "The requested observation completed."
 
-    def create_goal(self, description: str, priority: int, plan: AgentPlan | None) -> str:
-        payload = {"plan": plan.model_dump(mode="json")} if plan else {}
+    def create_goal(
+        self, description: str, priority: int, plan: AgentPlan | None,
+        confirmed: bool = False,
+    ) -> str:
+        payload = {"plan": plan.model_dump(mode="json"), "confirmed": confirmed} if plan else {}
         goal_id = self.store.add_goal(description, priority, "user", payload)
         self.store.audit("goal_created", {"goal_id": goal_id, "description": description, "priority": priority})
         return goal_id
