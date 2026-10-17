@@ -52,6 +52,8 @@ Use `POST /api/v1/agent/learning/clarification-answer` when the owner answers a 
 - Frozen + growing JSONL intent benchmark, including wrong-selection rate separately from safe abstention.
 - Versioned 12,840-example global seed corpus generated from registered action examples, loaded through chunked BGE embeddings and cached in SQLite by model/corpus version.
 - Offline confidence-weight fitting.
+- Decision traces correlate confidence-signal records with final execution/verification outcomes, including blocked, preview-only, confirmation-required and compound-step outcomes.
+- Per-layer latency and LLM-call counts are captured by preview; the deferred target-machine benchmark reports p50/p95 per layer and end-to-end.
 - Prompt/response size, latency, load-duration, keep-alive, lifetime success/failure, malformed-JSON and JSON-validity metrics, plus rolling p50/p95 summaries.
 - Preview-only target-machine benchmark CLI for end-to-end latency, LLM-call share and token measurements.
 
@@ -79,7 +81,7 @@ py -3.11 -m pip install -e ".[dev,windows,media,browser]"
 py -3.11 -m prixon.benchmark --split all --output artifacts/prixon-benchmark-latest.json
 ~~~
 
-This benchmark calls the preview/decision path only; it does not execute Windows actions. It archives end-to-end p50/p95 latency, wrong-selection and clarification rates, local-model request share, call count, JSON-validity rate and Ollama token totals. Run it separately for `--split frozen` and `--split growing` when comparing a routing or confidence-policy change. Hardware results must be measured on the target laptop; CI results are not a substitute.
+This benchmark calls the preview/decision path only; it does not execute Windows actions. It archives end-to-end and per-layer p50/p95 latency, wrong-selection and clarification rates, local-model request share, call count, JSON-validity rate and Ollama token totals. Run it separately for `--split frozen` and `--split growing` when comparing a routing or confidence-policy change. Hardware results must be measured on the target laptop; CI results are not a substitute.
 
 ## Safety boundaries
 - Ollama endpoint is loopback-only; there is no hosted-model fallback.

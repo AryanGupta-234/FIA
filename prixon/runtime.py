@@ -830,15 +830,26 @@ class AgentRuntime:
                     float(macro_preview.get("confidence", 0.0)), RiskTier.ROUTINE.value,
                 ))
             ):
+                self._record_decision_outcome(
+                    macro_preview, outcome="approved_macro_trigger_blocked",
+                    detail="approved_macro_trigger_below_confidence_gate",
+                )
                 return {
                     "status": "clarify",
                     "reason": "approved_macro_trigger_below_confidence_gate",
                     "confidence": macro_preview.get("confidence", 0.0),
                 }
-            return await self.run_macro(
+            macro_result = await self.run_macro(
                 matching_macro, args or {}, execute=macro_execute,
                 confirmed=confirmed, session_id=session_id,
             )
+            self._record_decision_outcome(
+                macro_preview,
+                outcome=f"approved_macro_{macro_result.get('status', 'unknown')}",
+                verified=(macro_result.get("execution") or {}).get("status") == "completed",
+                detail=str(macro_result.get("reason") or ""),
+            )
+            return macro_result
         clauses = self.split_compound(text)
         if len(clauses) > 1:
             compound_execute = bool(execute)

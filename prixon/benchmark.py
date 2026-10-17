@@ -29,6 +29,11 @@ def summarize_benchmark_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     llm_requests = sum(int(row.get("llm_calls", 0)) > 0 for row in rows)
     latencies = [float(row["latency_ms"]) for row in rows if row.get("latency_ms") is not None]
     correct = sum(bool(row.get("correct")) for row in rows)
+    layer_values: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        for layer, duration in (row.get("layer_timings_ms") or {}).items():
+            if duration is not None:
+                layer_values[str(layer)].append(float(duration))
     return {
         "requests": total,
         "correct": correct,
@@ -79,6 +84,15 @@ def summarize_benchmark_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "p95": _percentile(latencies, 0.95),
             "mean": round(statistics.mean(latencies), 2) if latencies else None,
             "max": round(max(latencies), 2) if latencies else None,
+        },
+        "layer_latency_ms": {
+            layer: {
+                "samples": len(values),
+                "p50": _percentile(values, 0.50),
+                "p95": _percentile(values, 0.95),
+                "mean": round(statistics.mean(values), 2),
+            }
+            for layer, values in sorted(layer_values.items())
         },
         "errors": sum(bool(row.get("error")) for row in rows),
     }
@@ -138,6 +152,7 @@ async def benchmark_runtime(
             "json_valid_calls": json_valid_calls,
             "json_invalid_calls": json_invalid_calls,
             "latency_ms": latency_ms,
+            "layer_timings_ms": result.get("layer_timings_ms") or {},
             "reason": reason,
             "error": error,
         })
