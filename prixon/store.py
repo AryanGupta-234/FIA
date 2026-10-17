@@ -141,6 +141,17 @@ class AgentStore:
                     approved INTEGER NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS routines (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    macro_id INTEGER NOT NULL,
+                    time_local TEXT NOT NULL,
+                    weekdays_json TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    last_fired_date TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS agent_settings (
                     key TEXT PRIMARY KEY,
                     value_json TEXT NOT NULL,
@@ -240,6 +251,89 @@ class AgentStore:
                 "UPDATE goals SET status=?,updated_at=? WHERE id=?",
                 (status, time.time(), goal_id),
             )
+            return cursor.rowcount == 1
+
+
+    def create_routine(
+        self, name: str, macro_id: int, time_local: str,
+        weekdays: list[int] | None = None,
+    ) -> int:
+        selected_days = sorted(set(weekdays if weekdays is not None else range(7)))
+        if not selected_days or any(day not in range(7) for day in selected_days):
+            raise ValueError("Routine weekdays must contain values from 0 through 6.")
+        if len(time_local) != 5 or time_local[2] != ":":
+            raise ValueError("Routine time must use 24-hour HH:MM format.")
+        try:
+            hour, minute = (int(part) for part in time_local.split(":"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Routine time must use 24-hour HH:MM format.") from exc
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            raise ValueError("Routine time must use 24-hour HH:MM format.")
+        now = time.time()
+        with self.connect() as db:
+            cursor = db.execute(
+                """INSERT INTO routines(
+                       name,macro_id,time_local,weekdays_json,enabled,created_at,updated_at
+                   ) VALUES(?,?,?,?,1,?,?)""",
+                (name, macro_id, time_local, json.dumps(selected_days), now, now),
+            )
+            return int(cursor.lastrowid)
+
+    def routines(self, enabled: bool | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM routines"
+        params: tuple[Any, ...] = ()
+        if enabled is not None:
+            query += " WHERE enabled=?"
+            params = (int(enabled),)
+        query += " ORDER BY time_local,id"
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+            return [
+                {"id": row["id"], "name": row["name"], "macro_id": row["macro_id"],
+                 "time_local": row["time_local"],
+                 "weekdays": json.loads(row["weekdays_json"]),
+                 "enabled": bool(row["enabled"]), "last_fired_date": row["last_fired_date"]}
+                for row in rows
+            ]
+
+    def due_routines(self, now_local) -> list[dict[str, Any]]:
+        date_key = now_local.date().isoformat()
+        weekday = now_local.weekday()
+        clock = now_local.strftime("%H:%M")
+        due = []
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM routines WHERE enabled=1 AND time_local<=? "
+                "AND (last_fired_date IS NULL OR last_fired_date<>?) ORDER BY time_local,id",
+                (clock, date_key),
+            ).fetchall()
+            for row in rows:
+                weekdays = json.loads(row["weekdays_json"])
+                if weekday not in weekdays:
+                    continue
+                cursor = db.execute(
+                    "UPDATE routines SET last_fired_date=?,updated_at=? "
+                    "WHERE id=? AND (last_fired_date IS NULL OR last_fired_date<>?)",
+                    (date_key, time.time(), row["id"], date_key),
+                )
+                if cursor.rowcount == 1:
+                    due.append({
+                        "id": row["id"], "name": row["name"], "macro_id": row["macro_id"],
+                        "time_local": row["time_local"],
+                    })
+        return due
+
+    def set_routine_enabled(self, routine_id: int, enabled: bool) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE routines SET enabled=?,updated_at=? WHERE id=?",
+                (int(enabled), time.time(), routine_id),
+            )
+            return cursor.rowcount == 1
+
+    def delete_routine(self, routine_id: int) -> bool:
+        with self.connect() as db:
+            cursor = db.execute("DELETE FROM routines WHERE id=?", (routine_id,))
             return cursor.rowcount == 1
 
     def record_undo(
