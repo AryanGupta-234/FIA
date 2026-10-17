@@ -121,6 +121,11 @@ class AgentStore:
                     updated_at REAL NOT NULL
                 );
             """)
+            undo_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(undo_journal)").fetchall()
+            }
+            if "output_json" not in undo_columns:
+                db.execute("ALTER TABLE undo_journal ADD COLUMN output_json TEXT NOT NULL DEFAULT '{}'")
 
     def audit(self, event_type: str, payload: dict[str, Any]) -> None:
         with self.connect() as db:
@@ -385,6 +390,66 @@ class AgentStore:
                 (shape_hash, name, json.dumps(plan, default=str), json.dumps(phrases),
                  successes, int(approved), time.time()),
             )
+
+    def macros(self, approved: bool | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM macros"
+        params: tuple[Any, ...] = ()
+        if approved is not None:
+            query += " WHERE approved=?"
+            params = (int(approved),)
+        query += " ORDER BY successes DESC"
+        with self.connect() as db:
+            rows = db.execute(query, params).fetchall()
+            return [
+                {"id": row["id"], "shape_hash": row["shape_hash"], "name": row["name"],
+                 "plan": json.loads(row["plan_json"]),
+                 "trigger_phrases": json.loads(row["trigger_phrases_json"]),
+                 "successes": row["successes"], "approved": bool(row["approved"])}
+                for row in rows
+            ]
+
+    def approve_macro(self, macro_id: int, approved: bool = True) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE macros SET approved=?,updated_at=? WHERE id=?",
+                (int(approved), time.time(), macro_id),
+            )
+            return cursor.rowcount == 1
+
+    def alias_candidates(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM alias_candidates").fetchall()
+            return [
+                {"phrase": row["phrase"], "target": row["target"],
+                 "successes": row["successes"], "failures": row["failures"],
+                 "sessions": json.loads(row["sessions_json"]), "last_updated": row["last_updated"]}
+                for row in rows
+            ]
+
+    def update_alias_candidate(
+        self, phrase: str, target: str, successes: float, failures: float,
+        sessions: list[str], updated_at: float | None = None,
+    ) -> None:
+        with self.connect() as db:
+            db.execute(
+                """UPDATE alias_candidates SET successes=?,failures=?,sessions_json=?,last_updated=?
+                   WHERE phrase=? AND target=?""",
+                (successes, failures, json.dumps(sessions), updated_at or time.time(), phrase, target),
+            )
+
+    def successful_episodes(self, limit: int = 1000) -> list[dict[str, Any]]: 
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM episodes WHERE outcome='success' ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [
+                {"id": row["id"], "utterance": row["utterance"],
+                 "plan": json.loads(row["plan_json"]),
+                 "layer_path": json.loads(row["layer_path_json"]),
+                 "created_at": row["created_at"]}
+                for row in rows
+            ]
 
     def approved_macros(self) -> list[dict[str, Any]]:
         with self.connect() as db:
