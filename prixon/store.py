@@ -116,6 +116,16 @@ class AgentStore:
                     payload_json TEXT NOT NULL,
                     created_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS decision_records (
+                    decision_id TEXT PRIMARY KEY,
+                    decision_json TEXT NOT NULL,
+                    outcome_json TEXT NOT NULL DEFAULT '{}',
+                    owner_correct INTEGER,
+                    owner_notes TEXT NOT NULL DEFAULT '',
+                    owner_reviewed_at REAL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS goals (
                     id TEXT PRIMARY KEY,
                     description TEXT NOT NULL,
@@ -1144,6 +1154,95 @@ class AgentStore:
     def latest_world_state(self) -> dict[str, Any] | None:
         rows = self.world_state_rows(1)
         return rows[0] if rows else None
+
+    def record_decision_record(
+        self, decision_id: str, decision: dict[str, Any],
+    ) -> None:
+        now = time.time()
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO decision_records(
+                       decision_id,decision_json,outcome_json,created_at,updated_at
+                   ) VALUES(?,?, '{}', ?,?)
+                   ON CONFLICT(decision_id) DO UPDATE SET
+                   decision_json=excluded.decision_json,updated_at=excluded.updated_at""",
+                (
+                    str(decision_id),
+                    json.dumps(decision, ensure_ascii=False, default=str),
+                    now, now,
+                ),
+            )
+
+    def update_decision_record(
+        self, decision_id: str, outcome: dict[str, Any],
+    ) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                """UPDATE decision_records SET outcome_json=?,updated_at=?
+                   WHERE decision_id=?""",
+                (
+                    json.dumps(outcome, ensure_ascii=False, default=str),
+                    time.time(), str(decision_id),
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def review_decision_record(
+        self, decision_id: str, correct: bool, notes: str = "",
+    ) -> bool:
+        with self.connect() as db:
+            cursor = db.execute(
+                """UPDATE decision_records SET owner_correct=?,owner_notes=?,
+                   owner_reviewed_at=?,updated_at=? WHERE decision_id=?""",
+                (
+                    int(bool(correct)), str(notes)[:500], time.time(),
+                    time.time(), str(decision_id),
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def decision_records(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM decision_records ORDER BY created_at DESC LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall()
+            return [
+                {
+                    "decision_id": row["decision_id"],
+                    "decision": json.loads(row["decision_json"]),
+                    "outcome": json.loads(row["outcome_json"] or "{}"),
+                    "owner_correct": (
+                        bool(row["owner_correct"]) if row["owner_correct"] is not None else None
+                    ),
+                    "owner_notes": row["owner_notes"],
+                    "owner_reviewed_at": (
+                        float(row["owner_reviewed_at"]) if row["owner_reviewed_at"] else None
+                    ),
+                    "created_at": float(row["created_at"]),
+                }
+                for row in rows
+            ]
+
+    def owner_labeled_decisions(self, limit: int = 5000) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT * FROM decision_records
+                   WHERE owner_correct IS NOT NULL AND outcome_json!='{}'
+                   ORDER BY owner_reviewed_at DESC LIMIT ?""",
+                (max(1, min(int(limit), 20000)),),
+            ).fetchall()
+            return [
+                {
+                    "decision_id": row["decision_id"],
+                    "decision": json.loads(row["decision_json"]),
+                    "outcome": json.loads(row["outcome_json"] or "{}"),
+                    "correct": bool(row["owner_correct"]),
+                    "notes": row["owner_notes"],
+                    "reviewed_at": float(row["owner_reviewed_at"] or 0),
+                }
+                for row in rows
+            ]
 
     def audit_export_rows(
         self, *, after_id: int = 0, limit: int = 10000,

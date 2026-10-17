@@ -142,6 +142,13 @@ class ProactiveFeedbackRequest(BaseModel):
     accepted: bool
 
 
+class DecisionFeedbackRequest(BaseModel):
+    decision_id: str = Field(min_length=8, max_length=100)
+    correct: bool
+    notes: str = Field(default="", max_length=500)
+    confirmed: bool = False
+
+
 class EntityAliasRequest(BaseModel):
     phrase: str = Field(min_length=2, max_length=100)
     entity_type: str

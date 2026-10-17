@@ -489,7 +489,7 @@ class AgentRuntime:
         decision_id: str | None = None,
     ) -> str:
         decision_id = decision_id or uuid.uuid4().hex
-        self.store.audit("decision_made", {
+        decision_payload = {
             "decision_id": decision_id,
             "utterance": utterance,
             "status": status,
@@ -501,7 +501,9 @@ class AgentRuntime:
             "confidence_signals": confidence_signals,
             "confidence_weights": dict(DEFAULT_WEIGHTS) if confidence_signals is not None else None,
             "candidate_actions": candidate_actions,
-        })
+        }
+        self.store.record_decision_record(decision_id, decision_payload)
+        self.store.audit("decision_made", decision_payload)
         return decision_id
 
     def _record_decision_outcome(
@@ -513,7 +515,7 @@ class AgentRuntime:
         decision_id = decision.get("decision_id")
         if not decision_id:
             return
-        self.store.audit("decision_outcome", {
+        outcome_payload = {
             "decision_id": decision_id,
             "outcome": outcome,
             "action": decision.get("action"),
@@ -528,7 +530,9 @@ class AgentRuntime:
             "undo_id": undo_id,
             "automation_tier": automation_tier,
             "detail": detail,
-        })
+        }
+        self.store.update_decision_record(decision_id, outcome_payload)
+        self.store.audit("decision_outcome", outcome_payload)
 
     async def preview(
         self, text: str, *, trusted_args: dict[str, Any] | None = None,

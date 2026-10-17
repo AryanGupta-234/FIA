@@ -16,6 +16,7 @@ from prixon.schemas import (
     AgentPlan,
     AliasFeedbackRequest,
     DecisionRequest,
+    DecisionFeedbackRequest,
     DeleteAliasRequest,
     EntityAliasRequest,
     GoalCreateRequest,
@@ -233,6 +234,36 @@ def reset_learning(payload: ResetLearningRequest) -> dict[str, Any]:
             runtime.registry.unregister(action.name)
     runtime.store.audit("owner_reset_all_learning", result)
     return {"status": "reset", **result}
+
+
+@router.get("/decisions/review")
+def get_decision_review_queue(
+    limit: int = Query(50, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return runtime.store.decision_records(limit)
+
+
+@router.post("/decision-feedback")
+def review_decision(payload: DecisionFeedbackRequest) -> dict[str, Any]:
+    if not payload.confirmed:
+        return {
+            "status": "confirmation_required",
+            "decision_id": payload.decision_id,
+        }
+    if not runtime.store.review_decision_record(
+        payload.decision_id, payload.correct, payload.notes,
+    ):
+        raise HTTPException(404, "Decision record not found.")
+    runtime.store.audit("owner_reviewed_decision", {
+        "decision_id": payload.decision_id,
+        "correct": payload.correct,
+        "notes": payload.notes,
+    })
+    return {
+        "status": "reviewed",
+        "decision_id": payload.decision_id,
+        "correct": payload.correct,
+    }
 
 
 @router.get("/learning")
