@@ -8,8 +8,8 @@ from prixon.schemas import Candidate, IntentClass, RouteResult, RiskTier
 
 def normalize(text: str) -> str:
     value = text.casefold().strip()
-    value = re.sub(r"[^\\w\\s%.-]", " ", value)
-    value = re.sub(r"\\s+", " ", value)
+    value = re.sub(r"[^\w\s%.-]", " ", value)
+    value = re.sub(r"\s+", " ", value)
     return value
 
 
@@ -104,9 +104,9 @@ class IntentRouter:
         if not slots:
             return True
         if "application" in slots:
-            return bool(re.search(r"\\b(open|launch|start|fire up)\\s+\\w+", text))
+            return bool(re.search(r"\b(open|launch|start|fire up)\s+\w+", text))
         if "level" in slots:
-            return bool(re.search(r"\\b\\d{1,3}\\s*%?\\b", text))
+            return bool(re.search(r"\b\d{1,3}\s*%?\b", text))
         if "window" in slots:
             return any(word in text for word in ("this window", "foreground", "notepad", "chrome"))
         if "file" in slots:
