@@ -133,3 +133,66 @@ class WindowsMediaSessionAdapter:
             return bool(self.execute(compensation, args).get("accepted"))
         except Exception:
             return False
+
+
+class WindowsOfficeAdapter:
+    """Tier-2 Office COM adapter exposing counts and save-state only."""
+
+    APPLICATIONS = (
+        ("Word", "Word.Application", "Documents"),
+        ("Excel", "Excel.Application", "Workbooks"),
+        ("PowerPoint", "PowerPoint.Application", "Presentations"),
+    )
+
+    def status(self) -> dict[str, Any]:
+        try:
+            import pythoncom
+            import win32com.client
+        except ImportError as exc:
+            raise RuntimeError(
+                "Office automation requires the optional pywin32 Windows dependency."
+            ) from exc
+
+        rows: list[dict[str, Any]] = []
+        pythoncom.CoInitialize()
+        try:
+            for display_name, prog_id, collection_name in self.APPLICATIONS:
+                try:
+                    application = win32com.client.GetActiveObject(prog_id)
+                except Exception:
+                    continue
+                collection = getattr(application, collection_name, None)
+                try:
+                    count = int(collection.Count) if collection is not None else 0
+                except Exception:
+                    count = 0
+                unsaved = 0
+                if collection is not None:
+                    for index in range(1, min(count, 100) + 1):
+                        try:
+                            document = collection.Item(index)
+                            if not bool(document.Saved):
+                                unsaved += 1
+                        except Exception:
+                            continue
+                rows.append({
+                    "application": display_name,
+                    "open_count": count,
+                    "unsaved_count": unsaved,
+                })
+        finally:
+            pythoncom.CoUninitialize()
+
+        return {
+            "automation_available": True,
+            "applications": rows,
+            "open_document_count": sum(item["open_count"] for item in rows),
+            "unsaved_document_count": sum(item["unsaved_count"] for item in rows),
+            "content_read": False,
+            "names_or_paths_read": False,
+        }
+
+    def execute(self, action: str, _args: dict[str, Any] | None = None) -> dict[str, Any]:
+        if action != "office.status":
+            raise ValueError(f"Office action is not registered: {action}")
+        return self.status()
