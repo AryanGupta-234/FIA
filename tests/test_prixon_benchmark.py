@@ -1,6 +1,4 @@
 from prixon.benchmark import summarize_benchmark_rows
-
-
 from prixon.ollama import OllamaClient
 
 
