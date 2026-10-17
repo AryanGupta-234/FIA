@@ -15,7 +15,7 @@ from prixon.confidence import (
 from prixon.config import PrixonSettings
 from prixon.embeddings import FastEmbedAdapter, SemanticRetriever
 from prixon.entities import EntityIndex, ReferenceResolver
-from prixon.executor import ActionExecutor, ExecutionBudget
+from prixon.executor import ActionExecutor, ExecutionBudget, WindowsActionAdapters
 from prixon.kill_switch import KillSwitch
 from prixon.learning import OwnerLexicon
 from prixon.ollama import OllamaClient
@@ -80,8 +80,14 @@ class AgentRuntime:
             self.settings.ollama_timeout_seconds, self.settings.ollama_keep_alive,
         )
         self.kill_switch = KillSwitch()
+        adapters = WindowsActionAdapters(
+            self.perception,
+            browser_debug_enabled=self.settings.browser_debug_enabled,
+            browser_debug_port=self.settings.browser_debug_port,
+        )
         self.executor = ActionExecutor(
             self.registry, self.store, self.perception, self.kill_switch,
+            adapters=adapters,
             budget=ExecutionBudget(
                 max_steps=self.settings.agent_max_plan_steps,
                 max_replans=self.settings.agent_max_replans,
