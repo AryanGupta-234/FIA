@@ -60,6 +60,76 @@ class WindowsPerception:
         }
 
     @staticmethod
+    def open_windows(limit: int = 50) -> list[dict[str, Any]]:
+        """Enumerate visible top-level window metadata; never inspect window contents."""
+        if os.name != "nt":
+            return []
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        enum_proc_type = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM,
+        )
+        user32.EnumWindows.argtypes = [enum_proc_type, wintypes.LPARAM]
+        user32.EnumWindows.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetWindow.restype = wintypes.HWND
+        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+        max_windows = max(1, min(int(limit), 100))
+        foreground_hwnd = int(user32.GetForegroundWindow() or 0)
+        rows: list[dict[str, Any]] = []
+
+        def collect(hwnd, _lparam):
+            if len(rows) >= max_windows:
+                return False
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            # Ignore owned pop-up windows; retain independent application windows.
+            if user32.GetWindow(hwnd, 4):  # GW_OWNER
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(min(length + 1, 256))
+            user32.GetWindowTextW(hwnd, buffer, len(buffer))
+            raw_title = buffer.value[:240].strip()
+            if not raw_title:
+                return True
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            try:
+                process_name = psutil.Process(int(pid.value)).name()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                process_name = None
+            sensitive = WindowsPerception._is_sensitive_title(raw_title)
+            rows.append({
+                "handle": int(hwnd),
+                "pid": int(pid.value),
+                "process": process_name,
+                "title": None if sensitive else raw_title,
+                "sensitive": sensitive,
+                "foreground": int(hwnd) == foreground_hwnd,
+                "minimized": bool(user32.IsIconic(hwnd)),
+            })
+            return len(rows) < max_windows
+
+        callback = enum_proc_type(collect)
+        user32.EnumWindows(callback, 0)
+        rows.sort(key=lambda item: (not item["foreground"], item["process"] or "", item["handle"]))
+        return rows
+
+    @staticmethod
     def _installed_apps() -> list[dict[str, str]]:
         if os.name != "nt":
             return []
@@ -129,6 +199,7 @@ class WindowsPerception:
             "battery": battery_state,
             "network": network_state,
             "foreground_window": self._foreground_window(),
+            "open_windows": self.open_windows(limit=50),
             "process_count": len(psutil.pids()),
         }
 
