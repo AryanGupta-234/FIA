@@ -111,7 +111,7 @@ def default_actions() -> list[ActionSpec]:
             preconditions=("installed_application_resolves",),
             postconditions=("target_process_started",),
             risk=RiskTier.REVERSIBLE, undo_supported=True,
-            automation_tiers=("native_api", "shell_uri"),
+            automation_tiers=("native_api",),
         ),
         ActionSpec(
             name="window.minimize", description="Minimize the grounded foreground window.",
