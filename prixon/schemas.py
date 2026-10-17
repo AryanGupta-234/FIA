@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +38,9 @@ class ActionSpec(BaseModel):
     risk: RiskTier = RiskTier.READ_ONLY
     undo_supported: bool = False
     sensitive_output: bool = False
+    timeout_seconds: float = Field(default=12.0, gt=0.0, le=60.0)
+    idempotent: bool = False
+    retry_policy: Literal["never", "once_if_idempotent"] = "never"
     automation_tiers: tuple[str, ...] = ("native_api",)
 
 

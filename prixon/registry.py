@@ -12,8 +12,36 @@ class ActionRegistry:
             self.register(action)
 
     def register(self, action: ActionSpec) -> None:
+        if action.risk == RiskTier.READ_ONLY and not action.idempotent:
+            action = action.model_copy(update={
+                "idempotent": True,
+                "retry_policy": "once_if_idempotent",
+            })
+        safe_retries = {"window.minimize", "window.maximize", "window.restore", "volume.set"}
+        if action.name in safe_retries and not action.idempotent:
+            action = action.model_copy(update={
+                "idempotent": True,
+                "retry_policy": "once_if_idempotent",
+            })
         if action.name in self._actions:
             raise ValueError(f"Duplicate action: {action.name}")
+        action_timeouts = {
+            "app.launch": 8.0,
+            "media.status": 5.0,
+            "media.play": 5.0,
+            "media.pause": 5.0,
+            "media.stop": 5.0,
+            "media.skip_next": 5.0,
+            "media.skip_previous": 5.0,
+            "office.status": 5.0,
+            "browser.debug_status": 3.0,
+            "clipboard.inspect": 3.0,
+            "clipboard.read": 3.0,
+            "ui.activate_control": 4.0,
+        }
+        timeout = action_timeouts.get(action.name)
+        if timeout is not None and action.timeout_seconds == 12.0:
+            action = action.model_copy(update={"timeout_seconds": timeout})
         self._actions[action.name] = action
 
     def get(self, name: str) -> ActionSpec | None:

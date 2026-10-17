@@ -805,13 +805,19 @@ class ActionExecutor:
             future = self._executor.submit(
                 self.adapters.execute_tier, action_name, args, tier,
             )
+            action_timeout = min(
+                self.budget.step_timeout_seconds,
+                max(0.1, float(action.timeout_seconds)),
+            )
             try:
-                candidate = future.result(timeout=self.budget.step_timeout_seconds)
+                candidate = future.result(timeout=action_timeout)
             except TimeoutError:
                 failures.append(f"{tier}:timeout")
                 future.cancel()
                 self.store.audit("automation_tier_timeout", {
-                    "action": action_name, "tier": tier, "args": args,
+                    "action": action_name, "tier": tier,
+                    "timeout_seconds": action_timeout,
+                    "idempotent": action.idempotent,
                 })
                 # The timed-out worker may still be executing; never start a second
                 # implementation of the same state-changing operation concurrently.
@@ -1001,9 +1007,10 @@ class ActionExecutor:
             )
             if not action_result.success:
                 action = self.registry.get(step.tool)
-                retryable = action is not None and (
-                    action.risk == RiskTier.READ_ONLY
-                    or step.tool in {"volume.set", "window.minimize", "window.maximize", "window.restore"}
+                retryable = bool(
+                    action
+                    and action.idempotent
+                    and action.retry_policy == "once_if_idempotent"
                 )
                 if retryable:
                     time.sleep(0.25)

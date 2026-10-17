@@ -23,12 +23,12 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - Suggest-only proactive engine with cooldown, focus/fullscreen suppression and persistent annoyance.
 
 ### Safe execution
-- Typed action contracts with slots, preconditions, postconditions, undo support, risk and automation tiers.
+- Typed action contracts with slots, preconditions, postconditions, undo support, risk, per-action timeouts, idempotency, retry policy and automation tiers.
 - Plan validation at planner and executor boundaries.
 - Native Win32/Settings URI adapters plus tier-2 Windows media-session and Office COM adapters; media reads playback state only, Office reads open/unsaved counts only.
 - Optional loopback Chromium DevTools diagnostics for browser product/version and target-type counts only; no URLs, titles, DOM, cookies or page data are read.
 - UI Automation summaries are bounded to actionable roles/names/automation IDs, cached per HWND, and invalidated on window lifecycle/focus events.
-- Step, wall-clock, model-token and action-rate budgets. Ollama generation tokens are charged against one per-request budget shared by arbitration, self-consistency, compound planning and failure reflection; partial compound recovery inherits the original wall-clock deadline.
+- Step, wall-clock, model-token and action-rate budgets. Each action declares its own timeout, idempotency and retry policy within the global step limit. Ollama generation tokens are charged against one per-request budget shared by arbitration, self-consistency, compound planning and failure reflection; partial compound recovery inherits the original wall-clock deadline.
 - Postcondition verification and deterministic prediction-error logging.
 - Retry once, then constrained failure reflection/replan, then escalation.
 - Compound failure recovery resumes only independent unattempted steps; completed actions are never replayed and dependent steps are surfaced as blocked.

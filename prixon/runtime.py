@@ -435,6 +435,9 @@ class AgentRuntime:
                 "postconditions": list(action.postconditions),
                 "risk": action.risk.value,
                 "undo_supported": action.undo_supported,
+                "timeout_seconds": action.timeout_seconds,
+                "idempotent": action.idempotent,
+                "retry_policy": action.retry_policy,
                 "automation_tiers": list(action.automation_tiers),
                 "hard_negatives": list(action.hard_negatives[:3]),
             }
