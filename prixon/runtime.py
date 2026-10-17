@@ -6,7 +6,12 @@ import time
 from datetime import datetime
 from typing import Any
 
-from prixon.confidence import DEFAULT_WEIGHTS, DecisionSignals, fuse_confidence, meets_risk_threshold
+from prixon.confidence import (
+    DEFAULT_WEIGHTS,
+    DecisionSignals,
+    fuse_confidence,
+    meets_risk_threshold,
+)
 from prixon.config import PrixonSettings
 from prixon.embeddings import FastEmbedAdapter, SemanticRetriever
 from prixon.entities import EntityIndex, ReferenceResolver
