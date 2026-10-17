@@ -158,12 +158,12 @@ def delete_learning_alias(payload: DeleteAliasRequest) -> dict[str, Any]:
 def reset_learning(payload: ResetLearningRequest) -> dict[str, Any]:
     if not payload.confirmed:
         return {"status": "confirmation_required", "message": "This removes learned aliases, candidates, negative examples, semantic examples and macros."}
+    if runtime.semantic is not None:
+        runtime.semantic.clear_user_examples()
     result = runtime.store.remove_all_user_learning()
     for action in runtime.registry.all():
         if action.name.startswith("macro."):
             runtime.registry.unregister(action.name)
-    if runtime.semantic is not None:
-        runtime.semantic.clear_user_examples()
     runtime.store.audit("owner_reset_all_learning", result)
     return {"status": "reset", **result}
 
