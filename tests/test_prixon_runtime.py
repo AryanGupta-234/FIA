@@ -518,3 +518,21 @@ def test_routine_due_event_is_persisted_with_the_routine_claim(tmp_path):
     pending = store.pending_events()
     assert pending[-1]["event_type"] == "routine_due"
     assert pending[-1]["payload"]["routine_id"] == routine_id
+
+
+def test_successful_implicit_alias_never_auto_activates(tmp_path):
+    store = AgentStore(tmp_path / "implicit-review.sqlite3")
+    lexicon = OwnerLexicon(store)
+    for session in ("session-a", "session-b", "session-c", "session-a", "session-b"):
+        result = lexicon.observe(
+            "open my editor", "app.launch", success=True,
+            session_id=session, risk=RiskTier.REVERSIBLE,
+        )
+    assert result.status == "promotion_ready"
+    assert store.alias("open my editor") is None
+    assert len(lexicon.promotion_candidates()) == 1
+    approved = lexicon.approve_candidate(
+        "open my editor", "app.launch", RiskTier.REVERSIBLE,
+    )
+    assert approved.status == "promoted"
+    assert store.alias("open my editor")["explicit"] is True
