@@ -12,17 +12,17 @@ from prixon.runtime import AgentRuntime
 from prixon.schemas import (
     AgentPlan,
     AliasFeedbackRequest,
-    DeleteAliasRequest,
     DecisionRequest,
+    DeleteAliasRequest,
     EntityAliasRequest,
     GoalCreateRequest,
     GoalStatusRequest,
     MacroApprovalRequest,
     MacroRunRequest,
     ProactiveFeedbackRequest,
+    ResetLearningRequest,
     RiskTier,
     RunRequest,
-    ResetLearningRequest,
     TeachAliasRequest,
 )
 
