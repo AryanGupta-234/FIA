@@ -863,24 +863,48 @@ class AgentRuntime:
             )
         preview = await self.preview(text, trusted_args=args or {})
         if preview.get("status") != "selected":
+            self._record_decision_outcome(
+                preview,
+                outcome=str(preview.get("status") or "not_selected"),
+                detail=str(preview.get("reason") or ""),
+            )
             return preview
         macro_id = self._macro_id_for_action(str(preview.get("action") or ""))
         if macro_id is not None:
-            return await self.run_macro(
+            macro_result = await self.run_macro(
                 macro_id, args or {}, execute=execute, confirmed=confirmed, session_id=session_id,
             )
+            self._record_decision_outcome(
+                preview,
+                outcome=f"macro_{macro_result.get('status', 'unknown')}",
+                verified=(macro_result.get("execution") or {}).get("status") == "completed",
+                detail=str(macro_result.get("reason") or ""),
+            )
+            return macro_result
         merged_args = dict(preview.get("args") or {})
         action_name = preview["action"]
         merged_args, grounding_error = self._fill_args(action_name, text, merged_args)
         if grounding_error:
+            self._record_decision_outcome(
+                {**preview, "action": action_name},
+                outcome="clarification_required", detail=grounding_error,
+            )
             return {"status": "clarify", "clarification": grounding_error}
         action = self.registry.get(action_name)
         if action is None:
+            self._record_decision_outcome(
+                {**preview, "action": action_name}, outcome="rejected_unknown_action",
+            )
             return {"status": "rejected", "reason": "unknown_action"}
         if execute is None:
             execute = action.risk in {RiskTier.READ_ONLY, RiskTier.REVERSIBLE}
         for slot in action.required_slots:
             if merged_args.get(slot) in (None, ""):
+                self._record_decision_outcome(
+                    {**preview, "action": action_name},
+                    outcome="clarification_required",
+                    detail=f"required_slot_missing:{slot}",
+                )
                 return {"status": "clarify", "clarification": f"What {slot} should I use?"}
         plan = AgentPlan(
             goal=text,
@@ -902,13 +926,27 @@ class AgentRuntime:
             "confidence": preview.get("confidence", 0.0), "risk": action.risk.value,
         })
         if not validation.valid:
+            self._record_decision_outcome(
+                {**preview, "action": action_name},
+                outcome="plan_rejected", detail=";".join(validation.errors),
+            )
             return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
         if not execute:
+            self._record_decision_outcome(
+                {**preview, "action": action_name}, outcome="preview_only",
+            )
             return {**preview, "plan": plan.model_dump(mode="json"), "plan_validation": validation.model_dump()}
         confidence = float(preview.get("confidence", 0))
         if action.risk == RiskTier.ALWAYS_CONFIRM and not confirmed:
+            self._record_decision_outcome(
+                {**preview, "action": action_name}, outcome="confirmation_required",
+            )
             return {"status": "confirmation_required", "action": action_name, "args": merged_args}
         if action.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(confidence, action.risk.value):
+            self._record_decision_outcome(
+                {**preview, "action": action_name},
+                outcome="blocked_by_confidence_gate", detail=action.risk.value,
+            )
             return {
                 "status": "clarify", "reason": "confidence_below_risk_threshold",
                 "confidence": confidence, "risk": action.risk.value,
@@ -917,11 +955,37 @@ class AgentRuntime:
             action_name, merged_args, confirmed=confirmed, confidence=confidence,
             utterance=text, session_id=session_id,
         )
-        outcome = "success" if result.success else "failure"
-        self.store.episode(text, ["L0", "L1", "L2"], plan.model_dump(mode="json"), outcome, result.error)
+        outcome = "success" if result.success and result.verified else "failure"
+        self.store.episode(
+            text, ["L0", preview.get("reason") or "L1/L2", "L3", "L5", "executor", "verifier"],
+            plan.model_dump(mode="json"), outcome, result.error,
+        )
+        decision_result = {
+            **preview,
+            "action": action_name,
+            "confidence": confidence,
+            "risk": action.risk.value,
+        }
+        self._record_decision_outcome(
+            decision_result,
+            outcome=(
+                "execution_verified" if result.success and result.verified
+                else "execution_unverified" if result.success
+                else "execution_failed"
+            ),
+            verified=result.verified,
+            prediction_error=0.0 if result.verified else 1.0,
+            undo_id=result.undo_id,
+            automation_tier=(result.output or {}).get("automation_tier"),
+            detail=result.error,
+        )
         self.store.audit("request_finished", {
+            "decision_id": preview.get("decision_id"),
             "utterance": text, "action": action_name, "success": result.success,
             "verified": result.verified, "confidence": confidence,
+            "risk": action.risk.value,
+            "confidence_signals": preview.get("confidence_signals"),
+            "outcome": outcome,
         })
         if result.success:
             self.store.queue_learning_signal(
