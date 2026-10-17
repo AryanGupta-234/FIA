@@ -16,6 +16,7 @@ def classify(text: str) -> IntentClass:
     value = normalize(text)
     if any(term in value for term in (
         "quarantine", "delete file", "move file", "rename file", "copy file",
+        "isolate this file", "isolate file",
     )):
         return IntentClass.FILE_OPERATION
     if any(term in value for term in (
@@ -46,12 +47,19 @@ def classify(text: str) -> IntentClass:
         "brightness", "settings", "setting", "night light", "focus assist", "bluetooth",
     )):
         return IntentClass.SYSTEM_SETTING
-    if re.search(r"\b(open|launch|start|fire up)\b", value):
+    if re.search(r"\b(open|launch|start|fire up|bring up)\b", value) or re.search(
+        r"\brun\s+(?:notepad|calculator|paint|spotify|brave|chrome|edge|discord|visual studio code)\b",
+        value,
+    ):
         return IntentClass.LAUNCH
     if any(term in value for term in (
-        "minimize", "maximize", "make this window full size", "restore", "unminimize",
+        "minimize", "maximize", "make this window full size", "make this app full screen",
+        "expand the current window", "fill the screen with this window", "put this window away",
+        "send the current window to the taskbar", "hide the foreground window",
+        "restore", "unminimize", "bring this window back",
         "close window", "close this window", "close current window", "close current app",
-        "close the current app", "close it",
+        "close the current app", "close the foreground window", "exit this window",
+        "shut this app window", "close it",
     )) or re.search(r"\bclose\s+(?:the\s+)?(?:current|this)\s+(?:window|app)\b", value) or re.match(r"^close\s+", value):
         return IntentClass.CONTROL
     if any(term in value for term in (
@@ -155,7 +163,11 @@ class IntentRouter:
             return True
         if "application" in slots:
             return bool(
-                re.search(r"\b(open|launch|start|fire up)\s+\w+", text)
+                re.search(r"\b(open|launch|start|fire up|bring up)\s+\w+", text)
+            or re.search(
+                r"\brun\s+(?:notepad|calculator|paint|spotify|brave|chrome|edge|discord|visual studio code)\b",
+                text,
+            )
                 or re.search(
                     r"\b(?:is|check if|whether)\s+([\w.-]+(?:\s+[\w.-]+){0,3})\s+(?:is\s+)?(?:running|open|active)\b",
                     text,
