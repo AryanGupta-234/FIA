@@ -387,6 +387,20 @@ class AgentStore:
         normalized = " ".join(name.casefold().split())
         now = time.time()
         with self.connect() as db:
+            incoming_metadata = dict(metadata or {})
+            existing = db.execute(
+                "SELECT metadata_json FROM entities WHERE kind=? AND normalized=? AND target IS ?",
+                (kind, normalized, target),
+            ).fetchone()
+            if existing is not None:
+                try:
+                    previous_metadata = json.loads(existing["metadata_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    previous_metadata = {}
+                # Perception refreshes must not erase owner-use signals.
+                for key in ("last_used_at", "use_count"):
+                    if key in previous_metadata:
+                        incoming_metadata[key] = previous_metadata[key]
             db.execute(
                 """INSERT INTO entities(kind,name,normalized,target,source,metadata_json,last_seen)
                    VALUES(?,?,?,?,?,?,?)
@@ -394,13 +408,34 @@ class AgentStore:
                      name=excluded.name,source=excluded.source,
                      metadata_json=excluded.metadata_json,last_seen=excluded.last_seen""",
                 (kind, name, normalized, target, source,
-                 json.dumps(metadata or {}, default=str), now),
+                 json.dumps(incoming_metadata, default=str), now),
             )
             row = db.execute(
                 "SELECT id FROM entities WHERE kind=? AND normalized=? AND target IS ?",
                 (kind, normalized, target),
             ).fetchone()
             return int(row["id"])
+
+    def mark_entity_used(self, kind: str, target: str) -> bool:
+        now = time.time()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT metadata_json FROM entities WHERE kind=? AND target=?",
+                (kind, target),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                metadata = json.loads(row["metadata_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                metadata = {}
+            metadata["last_used_at"] = now
+            metadata["use_count"] = int(metadata.get("use_count", 0)) + 1
+            db.execute(
+                "UPDATE entities SET metadata_json=? WHERE kind=? AND target=?",
+                (json.dumps(metadata, default=str), kind, target),
+            )
+            return True
 
     def remove_entity_target(self, target: str) -> int:
         with self.connect() as db:
