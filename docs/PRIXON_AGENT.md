@@ -17,6 +17,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 ### Autonomous loop
 - Persistent SQLite world/goal/episode/alias/macro/undo/audit state.
 - WinEvent foreground/window events, process deltas and Downloads completion events.
+- Explicit clipboard metadata and confirmation-gated text reads; clipboard text is excluded from persistent audit/episode records.
 - Explicit-goal continuation and local owner context (time/day/routine state).
 - Global Ctrl+Alt+Pause kill switch.
 - Suggest-only proactive engine with cooldown, focus/fullscreen suppression and persistent annoyance.
@@ -62,6 +63,7 @@ This benchmark calls the preview/decision path only; it does not execute Windows
 - L4 actions never execute autonomously.
 - Observed window/page/file text cannot teach aliases or elevate autonomy.
 - No browser credentials, cookies or password fields are collected.
+- Clipboard text is fetched only for a direct owner request after L4 confirmation; it is returned to the requester but never written to audit, episode or persistent goal records.
 - Vision/OCR and app-specific adapters remain future automation tiers.
 
 ## API

@@ -28,6 +28,8 @@ def classify(text: str) -> IntentClass:
         value,
     ):
         return IntentClass.SYSTEM_SETTING
+    if "clipboard" in value or "copied text" in value or "what did i copy" in value:
+        return IntentClass.QUERY
     if re.search(
         r"(?:^|\b)(?:is|check if|whether)\s+([\w.-]+(?:\s+[\w.-]+){0,3})\s+(?:is\s+)?(?:running|open|active)\b",
         value,

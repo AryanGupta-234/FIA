@@ -87,7 +87,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Fuzzy and contextual entity index; recent-file metadata from bounded known folders
 - [x] File change observation in Downloads, Documents and Desktop
 - [x] Optional WMI non-zero process-exit/crash classification
-- [ ] Add clipboard perception only behind explicit, privacy-reviewed actions
+- [x] Explicit clipboard metadata inspection and confirmation-gated text retrieval; no passive capture and sensitive output is excluded from persistent audit records
 
 #### Phase 3 — Retrieval and decision gate
 - [x] Optional BGE/FastEmbed action retrieval with top-8 shortlist and rank margin

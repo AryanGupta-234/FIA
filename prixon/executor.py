@@ -327,6 +327,10 @@ class WindowsActionAdapters:
                         pass
                 time.sleep(0.1)
             return {"opened_setting": setting, "uri": uri, "hwnd": hwnd}
+        if action == "clipboard.inspect":
+            return self._clipboard_metadata()
+        if action == "clipboard.read":
+            return self._clipboard_read(args)
         if action == "file.quarantine":
             self._require_windows()
             source = self._validated_user_file(args.get("file"))
@@ -336,6 +340,86 @@ class WindowsActionAdapters:
             shutil.move(str(source), str(destination))
             return {"original_path": str(source), "quarantined_path": str(destination)}
         raise ValueError(f"No executor adapter registered for {action!r}.")
+
+    @staticmethod
+    def _open_clipboard():
+        try:
+            import win32clipboard
+        except ImportError as exc:
+            raise RuntimeError("Clipboard actions require the optional pywin32 Windows dependency.") from exc
+        last_error = None
+        for _ in range(5):
+            try:
+                win32clipboard.OpenClipboard(None)
+                return win32clipboard
+            except Exception as exc:
+                last_error = exc
+                time.sleep(0.05)
+        raise RuntimeError(f"Windows clipboard is busy: {type(last_error).__name__}")
+
+    def _clipboard_metadata(self) -> dict[str, Any]:
+        self._require_windows()
+        clipboard = self._open_clipboard()
+        try:
+            formats: list[dict[str, Any]] = []
+            current = 0
+            while True:
+                current = clipboard.EnumClipboardFormats(current)
+                if not current:
+                    break
+                standard_names = {
+                    1: "CF_TEXT",
+                    2: "CF_BITMAP",
+                    8: "CF_DIB",
+                    13: "CF_UNICODETEXT",
+                    15: "CF_HDROP",
+                    17: "CF_DIBV5",
+                }
+                try:
+                    name = clipboard.GetClipboardFormatName(current)
+                except Exception:
+                    name = standard_names.get(current, f"FORMAT_{current}")
+                formats.append({"id": int(current), "name": str(name)[:100]})
+            names = " ".join(item["name"].casefold() for item in formats)
+            ids = {item["id"] for item in formats}
+            return {
+                "formats": formats,
+                "format_count": len(formats),
+                "text_available": bool({1, 13} & ids),
+                "html_available": "html format" in names or "text/html" in names,
+                "image_available": bool({2, 8, 17} & ids),
+                "file_list_available": 15 in ids,
+                "content_read": False,
+            }
+        finally:
+            clipboard.CloseClipboard()
+
+    def _clipboard_read(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._require_windows()
+        max_chars = int(args.get("max_chars", 2000))
+        if not 1 <= max_chars <= 4000:
+            raise ValueError("Clipboard text limit must be between 1 and 4000 characters.")
+        clipboard = self._open_clipboard()
+        try:
+            if clipboard.IsClipboardFormatAvailable(clipboard.CF_UNICODETEXT):
+                raw = clipboard.GetClipboardData(clipboard.CF_UNICODETEXT)
+                text = raw if isinstance(raw, str) else bytes(raw).decode("utf-16-le", errors="replace")
+            elif clipboard.IsClipboardFormatAvailable(clipboard.CF_TEXT):
+                raw = clipboard.GetClipboardData(clipboard.CF_TEXT)
+                text = raw.decode("mbcs", errors="replace") if isinstance(raw, bytes) else str(raw)
+            else:
+                raise ValueError("The clipboard does not currently contain plain text.")
+        finally:
+            clipboard.CloseClipboard()
+        returned = text[:max_chars]
+        return {
+            "text": returned,
+            "text_available": True,
+            "char_count": len(text),
+            "returned_chars": len(returned),
+            "truncated": len(text) > len(returned),
+            "content_read_explicitly": True,
+        }
 
     @staticmethod
     def _connection_count() -> int | None:
@@ -541,14 +625,17 @@ class ActionExecutor:
             failures.append(f"{tier}:postcondition_failed")
             output, selected_tier = candidate, tier
             self.store.audit("automation_tier_verification_failed", {
-                "action": action_name, "tier": tier, "output": candidate,
+                "action": action_name, "tier": tier,
+                "output": self.audit_output(action_name, candidate),
             })
 
         if undo_id:
             self.store.update_undo_output(undo_id, output)
         if not verified:
             self.store.audit("verification_failed", {
-                "action": action_name, "output": output, "tier_failures": failures,
+                "action": action_name,
+                "output": self.audit_output(action_name, output),
+                "tier_failures": failures,
             })
             if undo_id:
                 try:
@@ -559,11 +646,27 @@ class ActionExecutor:
             reason = "automation_tiers_exhausted:" + "|".join(failures)
             return ActionResult(False, action_name, output, reason, undo_id, False)
         self.store.audit("action_completed", {
-            "action": action_name, "args": args, "output": output,
+            "action": action_name, "args": args,
+            "output": self.audit_output(action_name, output),
             "undo_id": undo_id, "automation_tier": selected_tier,
             "tier_failures": failures,
         })
         return ActionResult(True, action_name, output, undo_id=undo_id, verified=True)
+
+    def audit_output(self, action_name: str, output: dict[str, Any]) -> dict[str, Any]:
+        action = self.registry.get(action_name)
+        if action is None or not action.sensitive_output:
+            return dict(output)
+        safe = {
+            key: value for key, value in output.items()
+            if key not in {"text", "content", "clipboard_text"}
+        }
+        sensitive_text = output.get("text", output.get("content", output.get("clipboard_text", "")))
+        safe.update({
+            "sensitive_output_redacted": True,
+            "sensitive_character_count": len(sensitive_text) if isinstance(sensitive_text, str) else None,
+        })
+        return safe
 
     def verify(self, action_name: str, args: dict[str, Any], output: dict[str, Any]) -> bool:
         if action_name in {
@@ -571,6 +674,10 @@ class ActionExecutor:
             "system.memory", "system.cpu", "system.wifi", "system.audio",
         }:
             return bool(output)
+        if action_name == "clipboard.inspect":
+            return "formats" in output and "content_read" in output
+        if action_name == "clipboard.read":
+            return isinstance(output.get("text"), str) and output.get("text_available") is True
         if action_name == "app.is_running":
             return "running" in output
         if action_name == "app.launch":

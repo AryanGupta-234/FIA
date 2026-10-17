@@ -339,6 +339,14 @@ class AgentRuntime:
             if not 0 <= level <= 100:
                 return args, "Volume level must be between 0 and 100."
             args["level"] = level
+        elif action_name == "clipboard.read":
+            try:
+                max_chars = int(args.get("max_chars", 2000))
+            except (TypeError, ValueError):
+                return args, "Clipboard text limit must be a whole number from 1 to 4000."
+            if not 1 <= max_chars <= 4000:
+                return args, "Clipboard text limit must be between 1 and 4000 characters."
+            args["max_chars"] = max_chars
         elif action_name == "settings.open":
             setting = str(args.get("setting") or "").casefold()
             if not setting:
@@ -1040,6 +1048,14 @@ class AgentRuntime:
 
     @staticmethod
     def format_observation(action_name: str, output: dict[str, Any]) -> str:
+        if action_name == "clipboard.read":
+            return str(output.get("text", ""))
+        if action_name == "clipboard.inspect":
+            labels = ", ".join(item["name"] for item in output.get("formats", [])) or "empty"
+            return (
+                f"Clipboard metadata: {output.get('format_count', 0)} format(s): {labels}. "
+                "Clipboard contents were not read."
+            )
         if action_name == "system.status":
             memory = output.get("memory", {})
             battery = output.get("battery")

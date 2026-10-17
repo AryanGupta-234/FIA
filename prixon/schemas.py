@@ -37,6 +37,7 @@ class ActionSpec(BaseModel):
     postconditions: tuple[str, ...] = ()
     risk: RiskTier = RiskTier.READ_ONLY
     undo_supported: bool = False
+    sensitive_output: bool = False
     automation_tiers: tuple[str, ...] = ("native_api",)
 
 
