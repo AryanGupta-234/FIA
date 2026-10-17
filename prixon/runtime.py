@@ -17,7 +17,9 @@ from prixon.planner import validate_plan
 from prixon.proactive import ProactiveEngine
 from prixon.registry import ActionRegistry
 from prixon.router import IntentRouter
-from prixon.schemas import AgentPlan, PlanStep, RiskTier, ThoughtRecord
+from prixon.schemas import (
+    ActionSpec, AgentPlan, IntentClass, PlanStep, RiskTier, ThoughtRecord,
+)
 from prixon.store import AgentStore
 
 logger = logging.getLogger(__name__)
@@ -71,6 +73,101 @@ class AgentRuntime:
                 logger.exception("Semantic retrieval unavailable; deterministic path remains active")
         self._suggestions: list[dict[str, Any]] = []
         self._loop = None
+        self._register_approved_macros()
+
+    def _register_approved_macros(self) -> None:
+        from prixon.router import classify
+        for macro in self.store.macros(approved=True):
+            risk_values = [self.registry.get(step["tool"]).risk for step in macro["plan"].get("steps", [])
+                           if self.registry.get(step["tool"])]
+            risk_order = {
+                RiskTier.READ_ONLY: 0, RiskTier.REVERSIBLE: 1,
+                RiskTier.ROUTINE: 2, RiskTier.ALWAYS_CONFIRM: 3,
+            }
+            risk = max(risk_values, key=lambda value: risk_order[value]) if risk_values else RiskTier.ALWAYS_CONFIRM
+            groups: dict[IntentClass, list[str]] = {}
+            for phrase in macro["trigger_phrases"]:
+                intent = classify(phrase)
+                groups.setdefault(intent, []).append(phrase)
+            for intent, phrases in groups.items():
+                action_name = f"macro.{macro['id']}.{intent.value}"
+                if self.registry.get(action_name):
+                    continue
+                self.registry.register(ActionSpec(
+                    name=action_name,
+                    description=f"Run approved personal routine: {macro['name']}",
+                    examples=tuple(phrases) + (macro["name"].casefold(),),
+                    intent_class=intent,
+                    verb_type="run_macro",
+                    target_type="macro",
+                    risk=risk,
+                    undo_supported=all(
+                        self.registry.get(step["tool"]).undo_supported
+                        for step in macro["plan"].get("steps", [])
+                        if self.registry.get(step["tool"])
+                    ),
+                ))
+
+    def _macro_id_for_action(self, action_name: str) -> int | None:
+        if not action_name.startswith("macro."):
+            return None
+        try:
+            return int(action_name.split(".", 2)[1])
+        except (IndexError, ValueError):
+            return None
+
+    def list_macros(self, approved: bool | None = None) -> list[dict[str, Any]]:
+        return self.store.macros(approved)
+
+    async def run_macro(
+        self, macro_id: int, supplied_args: dict[str, Any] | None = None, *,
+        execute: bool = False, confirmed: bool = False, session_id: str = "local-session",
+    ) -> dict[str, Any]:
+        macro = next((item for item in self.store.macros(approved=True) if item["id"] == macro_id), None)
+        if not macro:
+            return {"status": "not_found_or_not_approved"}
+        raw_plan = macro["plan"]
+        steps = []
+        for index, raw_step in enumerate(raw_plan.get("steps", [])):
+            step_args = dict(raw_step.get("args") or {})
+            for key, value in list(step_args.items()):
+                if isinstance(value, str) and value.startswith("$input."):
+                    input_name = value.removeprefix("$input.")
+                    if input_name not in (supplied_args or {}):
+                        return {"status": "clarify", "clarification": f"Provide {input_name} for this routine."}
+                    step_args[key] = supplied_args[input_name]
+            if supplied_args:
+                for key in ("application", "file", "level", "setting"):
+                    if key in supplied_args and key in self.registry.get(raw_step["tool"]).required_slots:
+                        step_args[key] = supplied_args[key]
+            if not (step_args.get("hwnd") == "$previous.hwnd"):
+                step_args, clarification = self._fill_args(
+                    raw_step["tool"], macro["name"], step_args,
+                )
+                if clarification:
+                    return {"status": "clarify", "clarification": clarification}
+            steps.append(PlanStep(
+                tool=raw_step["tool"], args=step_args,
+                depends_on=raw_step.get("depends_on", []),
+                expected_outcome=raw_step.get("expected_outcome", "verified"),
+            ))
+        plan = AgentPlan(goal=macro["name"], steps=steps)
+        validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
+        if not validation.valid:
+            return {"status": "rejected", "reason": "macro_plan_invalid", "errors": validation.errors}
+        if not execute:
+            return {"status": "planned", "macro": macro["name"],
+                    "plan": plan.model_dump(mode="json")}
+        if any(self.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM for step in plan.steps) and not confirmed:
+            return {"status": "confirmation_required", "macro": macro["name"]}
+        result = self.executor.execute_plan(plan, confirmed=confirmed)
+        self.store.episode(
+            macro["name"], ["macro", "executor", "verifier"],
+            plan.model_dump(mode="json"),
+            "success" if result["status"] == "completed" else "failure",
+            result.get("reason"),
+        )
+        return {"status": result["status"], "macro": macro["name"], "execution": result}
 
     def refresh_entities(self) -> dict[str, int]:
         apps = self.perception.installed_apps()
@@ -285,9 +382,19 @@ class AgentRuntime:
         preview = await self.preview(text)
         if preview.get("status") != "selected":
             return preview
+        macro_id = self._macro_id_for_action(str(preview.get("action") or ""))
+        if macro_id is not None:
+            return await self.run_macro(
+                macro_id, args or {}, execute=execute, confirmed=confirmed, session_id=session_id,
+            )
         merged_args = dict(preview.get("args") or {})
-        merged_args.update(args or {})
+        user_args = {key: value for key, value in (args or {}).items()
+                     if key not in {"hwnd", "application_target", "window"}}
+        merged_args.update(user_args)
         action_name = preview["action"]
+        merged_args, grounding_error = self._fill_args(action_name, text, merged_args)
+        if grounding_error:
+            return {"status": "clarify", "clarification": grounding_error}
         action = self.registry.get(action_name)
         if action is None:
             return {"status": "rejected", "reason": "unknown_action"}
@@ -331,10 +438,12 @@ class AgentRuntime:
             "utterance": text, "action": action_name, "success": result.success,
             "verified": result.verified, "confidence": confidence,
         })
-        self.lexicon.observe(
+        learning_result = self.lexicon.observe(
             text, action_name, success=result.success, session_id=session_id,
             risk=action.risk, explicit=False,
         )
+        if result.success and self.semantic is not None:
+            self.semantic.add_example(action_name, text)
         return {
             "status": "completed" if result.success else "failed",
             "action": action_name, "output": result.output, "error": result.error,
