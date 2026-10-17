@@ -123,3 +123,24 @@ class AliasFeedbackRequest(BaseModel):
 class ProactiveFeedbackRequest(BaseModel):
     trigger: str
     accepted: bool
+
+
+class EntityAliasRequest(BaseModel):
+    phrase: str = Field(min_length=2, max_length=100)
+    entity_type: str
+    target: str = Field(min_length=1, max_length=500)
+    confirmed: bool = False
+
+
+class MacroApprovalRequest(BaseModel):
+    approved: bool = True
+
+
+class MacroRunRequest(BaseModel):
+    args: dict[str, Any] = Field(default_factory=dict)
+    execute: bool = False
+    confirmed: bool = False
+
+
+class UndoRequest(BaseModel):
+    undo_id: str = Field(min_length=1, max_length=64)
