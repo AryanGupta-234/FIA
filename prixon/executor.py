@@ -759,9 +759,12 @@ class ActionExecutor:
                 False, action_name, error=decision.reason,
                 output={"requires_confirmation": decision.requires_confirmation},
             )
-        from prixon.confidence import meets_risk_threshold
+        from prixon.confidence import meets_risk_threshold, RISK_THRESHOLDS
+        active_thresholds = self.store.get_setting(
+            "confidence.active_thresholds", RISK_THRESHOLDS,
+        )
         if action.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(
-            confidence, action.risk.value,
+            confidence, action.risk.value, active_thresholds,
         ):
             return ActionResult(False, action_name, error="confidence_below_risk_threshold")
         precondition_error = self.adapters.check_preconditions(

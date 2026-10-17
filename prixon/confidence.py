@@ -42,10 +42,72 @@ def fuse_confidence(
     return round(max(0.0, min(1.0, score)), 4)
 
 
-def meets_risk_threshold(score: float, risk_tier: str) -> bool:
+def meets_risk_threshold(
+    score: float, risk_tier: str,
+    thresholds: dict[str, float] | None = None,
+) -> bool:
     if risk_tier == "always_confirm":
         return False
-    return score >= RISK_THRESHOLDS.get(risk_tier, 1.01)
+    active = thresholds or RISK_THRESHOLDS
+    return score >= float(active.get(risk_tier, 1.01))
+
+
+def fit_risk_thresholds(
+    rows: list[tuple[float, bool, str]],
+    *,
+    max_wrong_execution_rate: float = 0.02,
+    minimum_samples: int = 20,
+) -> dict[str, dict[str, float | int | str]]:
+    """Propose risk cutoffs using explicitly owner-reviewed decisions only."""
+    if not 0.0 <= max_wrong_execution_rate < 1.0:
+        raise ValueError("The allowed wrong-execution rate must be in [0, 1).")
+    grouped: dict[str, list[tuple[float, bool]]] = {
+        tier: [] for tier in ("read_only", "reversible", "allowlisted_routine")
+    }
+    for score, correct, risk in rows:
+        if risk in grouped:
+            grouped[risk].append((max(0.0, min(1.0, float(score))), bool(correct)))
+    proposal: dict[str, dict[str, float | int | str]] = {}
+    for tier, samples in grouped.items():
+        baseline = float(RISK_THRESHOLDS[tier])
+        if len(samples) < minimum_samples:
+            proposal[tier] = {
+                "threshold": baseline, "baseline_threshold": baseline,
+                "samples": len(samples), "selected_samples": 0,
+                "wrong_execution_rate": 0.0,
+                "status": "insufficient_owner_labels_keep_baseline",
+            }
+            continue
+        candidates = sorted({baseline, *(score for score, _ in samples)})
+        safe_candidates = []
+        for threshold in candidates:
+            selected = [(score, correct) for score, correct in samples if score >= threshold]
+            if not selected:
+                continue
+            wrong_rate = sum(not correct for _, correct in selected) / len(selected)
+            if wrong_rate <= max_wrong_execution_rate:
+                safe_candidates.append((threshold, len(selected), wrong_rate))
+        if safe_candidates:
+            threshold, selected_count, wrong_rate = min(safe_candidates, key=lambda item: item[0])
+            status = "proposed"
+        else:
+            threshold, selected_count, wrong_rate = 1.01, 0, 0.0
+            status = "no_safe_threshold_found_block_all"
+        proposal[tier] = {
+            "threshold": round(float(threshold), 4),
+            "baseline_threshold": baseline,
+            "samples": len(samples),
+            "selected_samples": selected_count,
+            "wrong_execution_rate": round(float(wrong_rate), 4),
+            "status": status,
+        }
+    proposal["always_confirm"] = {
+        "threshold": 1.01, "baseline_threshold": 1.01,
+        "samples": sum(1 for _, _, risk in rows if risk == "always_confirm"),
+        "selected_samples": 0, "wrong_execution_rate": 0.0,
+        "status": "always_confirm_never_autonomous",
+    }
+    return proposal
 
 
 def fit_logistic_weights(

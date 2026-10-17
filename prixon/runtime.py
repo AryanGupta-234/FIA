@@ -9,6 +9,7 @@ from typing import Any
 
 from prixon.confidence import (
     DEFAULT_WEIGHTS,
+    RISK_THRESHOLDS,
     DecisionSignals,
     fuse_confidence,
     meets_risk_threshold,
@@ -482,6 +483,32 @@ class AgentRuntime:
             safe["output"] = self.executor.audit_output(action_name, output)
         return safe
 
+    def _active_confidence_weights(self) -> dict[str, float]:
+        raw = self.store.get_setting("confidence.active_weights", DEFAULT_WEIGHTS)
+        if not isinstance(raw, dict) or set(raw) != set(DEFAULT_WEIGHTS):
+            return dict(DEFAULT_WEIGHTS)
+        try:
+            weights = {key: float(value) for key, value in raw.items()}
+        except (TypeError, ValueError):
+            return dict(DEFAULT_WEIGHTS)
+        if any(value < 0.0 or value > 1.0 for value in weights.values()) or sum(weights.values()) <= 0:
+            return dict(DEFAULT_WEIGHTS)
+        return weights
+
+    def _active_risk_thresholds(self) -> dict[str, float]:
+        raw = self.store.get_setting("confidence.active_thresholds", RISK_THRESHOLDS)
+        if not isinstance(raw, dict):
+            return dict(RISK_THRESHOLDS)
+        thresholds = dict(RISK_THRESHOLDS)
+        for key, value in raw.items():
+            if key in thresholds and isinstance(value, (int, float)) and 0.0 <= float(value) <= 1.01:
+                thresholds[key] = float(value)
+        thresholds["always_confirm"] = 1.01
+        return thresholds
+
+    def _self._meets_risk_threshold(self, score: float, risk_tier: str) -> bool:
+        return meets_risk_threshold(score, risk_tier, self._active_risk_thresholds())
+
     def _record_decision(
         self, *, utterance: str, status: str, intent_class: str | None,
         action: str | None, confidence: float, risk: str | None, reason: str,
@@ -499,7 +526,7 @@ class AgentRuntime:
             "risk": risk,
             "reason": reason,
             "confidence_signals": confidence_signals,
-            "confidence_weights": dict(DEFAULT_WEIGHTS) if confidence_signals is not None else None,
+            "confidence_weights": self._active_confidence_weights() if confidence_signals is not None else None,
             "candidate_actions": candidate_actions,
         }
         self.store.record_decision_record(decision_id, decision_payload)
@@ -760,7 +787,7 @@ class AgentRuntime:
             "user_lexicon_hit": 1.0 if alias_used else 0.0,
         }
         decision_gate_started = time.perf_counter()
-        confidence = fuse_confidence(DecisionSignals(**signal_values))
+        confidence = fuse_confidence(DecisionSignals(**signal_values), self._active_confidence_weights())
         layer_timings["decision_gate_ms"] = round(
             (time.perf_counter() - decision_gate_started) * 1000, 2,
         )
@@ -778,7 +805,7 @@ class AgentRuntime:
             "status": route.status, "intent_class": route.intent_class.value if route.intent_class else None,
             "action": action.name, "args": args, "confidence": confidence,
             "confidence_signals": signal_values,
-            "confidence_weights": dict(DEFAULT_WEIGHTS),
+            "confidence_weights": self._active_confidence_weights(),
             "risk": action.risk.value,
             "requires_confirmation": action.risk == RiskTier.ALWAYS_CONFIRM,
             "execution_allowed_by_threshold": meets_risk_threshold(confidence, action.risk.value),
