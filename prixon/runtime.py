@@ -94,7 +94,9 @@ class AgentRuntime:
         self._suggestions: list[dict[str, Any]] = []
         self._loop = None
         self._entity_refresh_at = 0.0
-        self._entity_refresh_result = {"applications": 0, "processes": 0, "windows": 0}
+        self._entity_refresh_result = {
+            "applications": 0, "processes": 0, "windows": 0, "folders": 0, "recent_files": 0,
+        }
         self._register_approved_macros()
 
     def _register_approved_macros(self) -> None:
@@ -206,6 +208,10 @@ class AgentRuntime:
             return dict(self._entity_refresh_result)
         apps = self.perception.installed_apps()
         app_count = self.index.refresh("application", apps)
+        folders = self.perception.known_folders()
+        folder_count = self.index.refresh("folder", folders)
+        recent_files = self.perception.recent_files(limit=100)
+        file_count = self.index.refresh("file", recent_files)
         processes = self.perception.processes(limit=1000)
         process_count = self.index.refresh(
             "process",
@@ -228,6 +234,7 @@ class AgentRuntime:
         self._entity_refresh_at = time.monotonic()
         self._entity_refresh_result = {
             "applications": app_count, "processes": process_count, "windows": window_count,
+            "folders": folder_count, "recent_files": file_count,
         }
         return dict(self._entity_refresh_result)
 
