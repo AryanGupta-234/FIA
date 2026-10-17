@@ -317,6 +317,13 @@ class AgentRuntime:
                 args["level"] = float(match.group(1))
             elif "level" not in args:
                 return args, "What volume level should I set, from 0 to 100?"
+            try:
+                level = float(args["level"])
+            except (TypeError, ValueError):
+                return args, "Volume level must be a number from 0 to 100."
+            if not 0 <= level <= 100:
+                return args, "Volume level must be between 0 and 100."
+            args["level"] = level
         elif action_name == "settings.open":
             setting = str(args.get("setting") or "").casefold()
             if not setting:
