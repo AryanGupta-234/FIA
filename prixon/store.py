@@ -77,6 +77,15 @@ class AgentStore:
                     created_at REAL NOT NULL,
                     PRIMARY KEY(action_name, phrase)
                 );
+                CREATE TABLE IF NOT EXISTS embedding_cache (
+                    model_name TEXT NOT NULL,
+                    corpus_version TEXT NOT NULL,
+                    action_name TEXT NOT NULL,
+                    phrase TEXT NOT NULL,
+                    vector_json TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(model_name, corpus_version, action_name, phrase)
+                );
                 CREATE TABLE IF NOT EXISTS pending_learning (
                     id TEXT PRIMARY KEY,
                     phrase TEXT NOT NULL,
@@ -628,6 +637,43 @@ class AgentStore:
                    vector_json=excluded.vector_json,created_at=excluded.created_at""",
                 (action_name, phrase, json.dumps(vector), time.time()),
             )
+
+    def cached_seed_embeddings(
+        self, model_name: str, corpus_version: str,
+    ) -> dict[tuple[str, str], list[float]]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT action_name,phrase,vector_json FROM embedding_cache
+                   WHERE model_name=? AND corpus_version=?""",
+                (model_name, corpus_version),
+            ).fetchall()
+        return {
+            (row["action_name"], row["phrase"]): json.loads(row["vector_json"])
+            for row in rows
+        }
+
+    def cache_seed_embeddings(
+        self,
+        model_name: str,
+        corpus_version: str,
+        rows: list[tuple[str, str, list[float]]],
+    ) -> int:
+        if not rows:
+            return 0
+        now = time.time()
+        with self.connect() as db:
+            db.executemany(
+                """INSERT INTO embedding_cache(
+                     model_name,corpus_version,action_name,phrase,vector_json,updated_at
+                   ) VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(model_name,corpus_version,action_name,phrase) DO UPDATE SET
+                     vector_json=excluded.vector_json,updated_at=excluded.updated_at""",
+                [
+                    (model_name, corpus_version, action, phrase, json.dumps(vector), now)
+                    for action, phrase, vector in rows
+                ],
+            )
+        return len(rows)
 
     def semantic_examples(self, action_name: str | None = None) -> list[dict[str, Any]]:
         with self.connect() as db:
