@@ -448,3 +448,22 @@
 {"text":"kindly move selected file to quarantine","expected_action":"file.quarantine","split":"growing","case_type":"clean"}
 {"text":"just move selected file to quarantine","expected_action":"file.quarantine","split":"growing","case_type":"noisy"}
 {"text":"can you please move selected file to quarantine","expected_action":"file.quarantine","split":"growing","case_type":"clean"}
+{"text":"show RAM usage","expected_action":"system.memory","split":"frozen","case_type":"clean"}
+{"text":"how much memory is free","expected_action":"system.memory","split":"frozen","case_type":"noisy"}
+{"text":"check available RAM","expected_action":"system.memory","split":"frozen","case_type":"clean"}
+{"text":"how much ram am I using","expected_action":"system.memory","split":"frozen","case_type":"noisy"}
+{"text":"memory usage","expected_action":"system.memory","split":"frozen","case_type":"clean"}
+{"text":"check cpu usage","expected_action":"system.cpu","split":"frozen","case_type":"noisy"}
+{"text":"how busy is my processor","expected_action":"system.cpu","split":"frozen","case_type":"clean"}
+{"text":"show cpu load","expected_action":"system.cpu","split":"frozen","case_type":"noisy"}
+{"text":"processor usage","expected_action":"system.cpu","split":"frozen","case_type":"clean"}
+{"text":"cpu percentage","expected_action":"system.cpu","split":"frozen","case_type":"noisy"}
+{"text":"is wifi connected","expected_action":"system.wifi","split":"growing","case_type":"clean"}
+{"text":"check wifi connection","expected_action":"system.wifi","split":"growing","case_type":"noisy"}
+{"text":"show wireless status","expected_action":"system.wifi","split":"growing","case_type":"clean"}
+{"text":"is my wireless connected","expected_action":"system.wifi","split":"growing","case_type":"noisy"}
+{"text":"wifi status","expected_action":"system.wifi","split":"growing","case_type":"clean"}
+{"text":"check volume","expected_action":"system.audio","split":"growing","case_type":"noisy"}
+{"text":"what is my volume","expected_action":"system.audio","split":"growing","case_type":"clean"}
+{"text":"current audio level","expected_action":"system.audio","split":"growing","case_type":"noisy"}
+{"text":"show master volume","expected_action":"system.audio","split":"growing","case_type":"clean"}
