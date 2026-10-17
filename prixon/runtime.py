@@ -1,0 +1,379 @@
+from __future__ import annotations
+
+import logging
+import re
+from typing import Any
+
+from prixon.confidence import DecisionSignals, fuse_confidence, meets_risk_threshold
+from prixon.config import PrixonSettings
+from prixon.embeddings import FastEmbedAdapter, SemanticRetriever
+from prixon.entities import EntityIndex, ReferenceResolver
+from prixon.executor import ActionExecutor, ExecutionBudget
+from prixon.kill_switch import KillSwitch
+from prixon.learning import OwnerLexicon
+from prixon.ollama import OllamaClient
+from prixon.perception import WindowsPerception
+from prixon.planner import validate_plan
+from prixon.proactive import ProactiveEngine
+from prixon.registry import ActionRegistry
+from prixon.router import IntentRouter
+from prixon.schemas import AgentPlan, PlanStep, RiskTier, ThoughtRecord
+from prixon.store import AgentStore
+
+logger = logging.getLogger(__name__)
+
+
+class AgentRuntime:
+    """Coordinates deterministic reflex routing and bounded deliberate planning."""
+
+    SETTING_TERMS = {
+        "display": ("display", "screen"),
+        "sound": ("sound", "audio"),
+        "wifi": ("wifi", "wireless"),
+        "bluetooth": ("bluetooth",),
+        "battery": ("battery", "battery saver"),
+        "night light": ("night light",),
+        "focus": ("focus assist", "do not disturb", "quiet hours"),
+        "network": ("network", "internet"),
+        "windows update": ("windows update", "updates"),
+    }
+
+    def __init__(
+        self, *, store: AgentStore | None = None, registry: ActionRegistry | None = None,
+        perception: WindowsPerception | None = None, ollama: OllamaClient | None = None,
+    ) -> None:
+        self.settings = PrixonSettings()
+        self.store = store or AgentStore()
+        self.registry = registry or ActionRegistry()
+        self.perception = perception or WindowsPerception()
+        self.index = EntityIndex(self.store)
+        self.references = ReferenceResolver()
+        self.lexicon = OwnerLexicon(self.store)
+        self.ollama = ollama or OllamaClient(
+            self.settings.ollama_base_url, self.settings.ollama_model,
+            self.settings.ollama_timeout_seconds, self.settings.ollama_keep_alive,
+        )
+        self.kill_switch = KillSwitch()
+        self.executor = ActionExecutor(
+            self.registry, self.store, self.perception, self.kill_switch,
+            budget=ExecutionBudget(
+                max_steps=self.settings.agent_max_plan_steps,
+                wall_clock_seconds=self.settings.agent_wall_clock_seconds,
+                step_timeout_seconds=self.settings.agent_step_timeout_seconds,
+            ),
+        )
+        self.proactive = ProactiveEngine(self.store)
+        self.semantic: SemanticRetriever | None = None
+        if self.settings.semantic_enabled:
+            try:
+                self.semantic = SemanticRetriever(self.registry, FastEmbedAdapter())
+            except (RuntimeError, OSError, ValueError):
+                logger.exception("Semantic retrieval unavailable; deterministic path remains active")
+        self._suggestions: list[dict[str, Any]] = []
+        self._loop = None
+
+    def refresh_entities(self) -> dict[str, int]:
+        apps = self.perception.installed_apps()
+        app_count = self.index.refresh("application", apps)
+        processes = self.perception.processes(limit=1000)
+        process_count = self.index.refresh(
+            "process",
+            [{"name": item["name"], "target": str(item["pid"]), **item}
+             for item in processes if item.get("name")],
+        )
+        foreground = self.perception.snapshot().get("foreground_window")
+        window_count = 0
+        if foreground and foreground.get("title"):
+            window_count = self.index.refresh("window", [{
+                "name": foreground["title"], "target": str(foreground["handle"]),
+                **foreground,
+            }])
+            self.references.remember({
+                "kind": "window", "name": foreground["title"],
+                "target": str(foreground["handle"]), "hwnd": foreground["handle"],
+            })
+        return {"applications": app_count, "processes": process_count, "windows": window_count}
+
+    def situation(self) -> dict[str, Any]:
+        snapshot = self.perception.snapshot()
+        foreground = snapshot.get("foreground_window")
+        return {
+            "foreground_app": foreground,
+            "open_windows": [foreground] if foreground else [],
+            "system": {
+                "cpu_percent": snapshot["cpu_percent"],
+                "memory_percent": snapshot["memory"]["percent"],
+                "battery": snapshot["battery"],
+            },
+            "active_goals": self.store.goals(),
+        }
+
+    @staticmethod
+    def split_compound(text: str) -> list[str]:
+        parts = re.split(
+            r"\s+(?:and then|then|after that)\s+|\s+and\s+(?=(?:open|launch|start|"
+            r"minimize|restore|set|check|show|list|quarantine)\b)",
+            text, flags=re.IGNORECASE,
+        )
+        return [part.strip(" ,.") for part in parts if part.strip(" ,.")]
+
+    def _fill_args(
+        self, action_name: str, text: str, supplied: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], str | None]:
+        args = dict(supplied or {})
+        snapshot = self.perception.snapshot()
+        foreground = snapshot.get("foreground_window")
+        if action_name == "app.launch":
+            mention = str(args.get("application") or "")
+            if not mention:
+                match = re.search(r"\b(?:open|launch|start|fire up)\s+(.+?)(?:\s+please)?$", text, re.I)
+                mention = match.group(1).strip(" .") if match else ""
+            if not mention:
+                return args, "Which installed application should I open?"
+            entity = self.index.resolve(mention, "application")
+            if not entity:
+                self.refresh_entities()
+                entity = self.index.resolve(mention, "application")
+            if not entity:
+                return args, f"I couldn't ground '{mention}' to an installed Start Menu application."
+            args["application"] = mention
+            args["application_target"] = entity["target"]
+        elif action_name in {"window.minimize", "window.restore"}:
+            if not foreground or not foreground.get("handle"):
+                return args, "There is no grounded foreground window to control."
+            args["window"] = str(foreground.get("title") or foreground["handle"])
+            args["hwnd"] = int(foreground["handle"])
+        elif action_name == "volume.set":
+            if "level" not in args:
+                match = re.search(r"\b(\d{1,3})\s*%?", text)
+                if not match:
+                    return args, "What volume level should I set, from 0 to 100?"
+                args["level"] = float(match.group(1))
+        elif action_name == "settings.open":
+            setting = str(args.get("setting") or "").casefold()
+            if not setting:
+                for candidate, terms in self.SETTING_TERMS.items():
+                    if any(term in text.casefold() for term in terms):
+                        setting = candidate
+                        break
+            if not setting:
+                return args, "Which Settings page should I open?"
+            args["setting"] = setting
+        elif action_name == "file.quarantine":
+            if "file" not in args:
+                return args, "Specify the exact file path to quarantine."
+        return args, None
+
+    def _shortlist(self, route) -> list[dict[str, Any]]:
+        actions = [candidate.action for candidate in route.candidates[:5]]
+        if not actions:
+            actions = self.registry.all()[:5]
+        return [
+            {"name": action.name, "description": action.description,
+             "examples": list(action.examples[:3]),
+             "required_slots": list(action.required_slots), "risk": action.risk.value}
+            for action in actions
+        ]
+
+    async def preview(self, text: str) -> dict[str, Any]:
+        self.refresh_entities()
+        normalized = " ".join(text.casefold().split())
+        alias_used = False
+        # Only user-taught aliases are eligible for direct substitution.
+        for alias in self.store.aliases():
+            if alias["phrase"] in normalized:
+                normalized = normalized.replace(alias["phrase"], alias["target"].replace(".", " "))
+                alias_used = True
+
+        route = IntentRouter(self.registry).route(normalized)
+        arbitration: dict[str, Any] | None = None
+        if route.status != "selected":
+            tools = self._shortlist(route)
+            if tools:
+                try:
+                    arbitration = await self.ollama.arbitrate(
+                        text, tools, self.situation(), self.store.recent_episodes(3),
+                    )
+                    action = self.registry.get(str(arbitration.get("action")))
+                    if action:
+                        route.status = "selected"
+                        route.selected_action = action.name
+                        route.confidence = float(arbitration.get("confidence", 0))
+                        route.reason = "local_ollama_shortlist_arbitration"
+                        route.slots = dict(arbitration.get("args") or {})
+                except Exception as exc:
+                    logger.info("Local arbitration unavailable: %s", exc)
+
+        action = self.registry.get(route.selected_action) if route.selected_action else None
+        if not action:
+            return {
+                "status": route.status, "intent_class": route.intent_class.value if route.intent_class else None,
+                "action": None, "args": {}, "confidence": route.confidence,
+                "reason": route.reason, "clarification": route.clarification,
+                "candidates": [candidate.model_dump(mode="json") for candidate in route.candidates],
+            }
+
+        args, clarification = self._fill_args(text=text, action_name=action.name, supplied=route.slots)
+        if clarification:
+            route.status = "clarify"
+        grounded = sum(1 for slot in action.required_slots if args.get(slot) not in (None, ""))
+        slot_score = grounded / max(1, len(action.required_slots))
+        candidate_scores = [candidate.score for candidate in route.candidates]
+        margin = max(0.0, candidate_scores[0] - candidate_scores[1]) if len(candidate_scores) > 1 else max(route.confidence, 0.85)
+        llm_score = float(arbitration.get("confidence", 0)) if arbitration else 0.0
+        foreground = self.situation().get("foreground_app")
+        confidence = fuse_confidence(DecisionSignals(
+            retrieval_margin=margin,
+            slot_grounding=slot_score,
+            llm_confidence=llm_score,
+            context_prior=1.0 if foreground else 0.5,
+            user_lexicon_hit=1.0 if alias_used else 0.0,
+        ))
+        return {
+            "status": route.status, "intent_class": route.intent_class.value if route.intent_class else None,
+            "action": action.name, "args": args, "confidence": confidence,
+            "risk": action.risk.value,
+            "requires_confirmation": action.risk == RiskTier.ALWAYS_CONFIRM,
+            "execution_allowed_by_threshold": meets_risk_threshold(confidence, action.risk.value),
+            "reason": route.reason, "clarification": clarification or route.clarification,
+            "candidates": [candidate.model_dump(mode="json") for candidate in route.candidates],
+            "thought": arbitration.get("thought") if arbitration else None,
+            "model_metrics": self.ollama.last_metrics,
+        }
+
+    async def run_request(
+        self, text: str, args: dict[str, Any] | None = None, *,
+        execute: bool = False, confirmed: bool = False, session_id: str = "local-session",
+    ) -> dict[str, Any]:
+        clauses = self.split_compound(text)
+        if len(clauses) > 1:
+            return await self._run_compound(
+                text, clauses, args or {}, execute=execute,
+                confirmed=confirmed, session_id=session_id,
+            )
+        preview = await self.preview(text)
+        if preview.get("status") != "selected":
+            return preview
+        merged_args = dict(preview.get("args") or {})
+        merged_args.update(args or {})
+        action_name = preview["action"]
+        action = self.registry.get(action_name)
+        if action is None:
+            return {"status": "rejected", "reason": "unknown_action"}
+        for slot in action.required_slots:
+            if merged_args.get(slot) in (None, ""):
+                return {"status": "clarify", "clarification": f"What {slot} should I use?"}
+        plan = AgentPlan(
+            goal=text,
+            steps=[PlanStep(
+                tool=action_name, args=merged_args, expected_outcome=", ".join(action.postconditions),
+            )],
+            thought=ThoughtRecord(
+                observation="Fresh local machine snapshot and grounded action candidate.",
+                hypothesis=f"Owner request maps to {action_name}.",
+                next_action=action_name,
+                expected_outcome=", ".join(action.postconditions),
+            ),
+        )
+        validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
+        self.store.audit("plan_validated", {
+            "goal": text, "valid": validation.valid, "errors": validation.errors,
+        })
+        if not validation.valid:
+            return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
+        if not execute:
+            return {**preview, "plan": plan.model_dump(mode="json"), "plan_validation": validation.model_dump()}
+        confidence = float(preview.get("confidence", 0))
+        if not meets_risk_threshold(confidence, action.risk.value):
+            return {
+                "status": "clarify", "reason": "confidence_below_risk_threshold",
+                "confidence": confidence, "risk": action.risk.value,
+            }
+        if action.risk == RiskTier.ALWAYS_CONFIRM and not confirmed:
+            return {"status": "confirmation_required", "action": action_name, "args": merged_args}
+        result = self.executor.execute_action(
+            action_name, merged_args, confirmed=confirmed, confidence=confidence,
+        )
+        outcome = "success" if result.success else "failure"
+        self.store.episode(text, ["L0", "L1", "L2"], plan.model_dump(mode="json"), outcome, result.error)
+        self.store.audit("request_finished", {
+            "utterance": text, "action": action_name, "success": result.success,
+            "verified": result.verified, "confidence": confidence,
+        })
+        self.lexicon.observe(
+            text, action_name, success=result.success, session_id=session_id,
+            risk=action.risk, explicit=False,
+        )
+        return {
+            "status": "completed" if result.success else "failed",
+            "action": action_name, "output": result.output, "error": result.error,
+            "verified": result.verified, "undo_id": result.undo_id,
+            "confidence": confidence, "plan": plan.model_dump(mode="json"),
+        }
+
+    async def _run_compound(
+        self, original: str, clauses: list[str], args: dict[str, Any], *,
+        execute: bool, confirmed: bool, session_id: str,
+    ) -> dict[str, Any]:
+        situation = self.situation()
+        tools = [
+            {"name": item.name, "description": item.description,
+             "required_slots": list(item.required_slots), "risk": item.risk.value,
+             "examples": list(item.examples[:3])}
+            for item in self.registry.all()
+        ]
+        try:
+            model_plan = await self.ollama.create_plan(
+                original, tools, situation, self.settings.agent_max_plan_steps,
+            )
+            plan = AgentPlan.model_validate(model_plan)
+        except Exception as exc:
+            return {
+                "status": "clarify", "reason": "compound_planning_unavailable",
+                "detail": type(exc).__name__,
+                "clarification": "Local planning is unavailable. Split this request into smaller steps.",
+            }
+        if len(plan.steps) != len(clauses):
+            return {"status": "clarify", "reason": "plan_clause_count_mismatch",
+                    "clarification": "Please separate the requested steps more clearly."}
+        for index, step in enumerate(plan.steps):
+            enriched, clarification = self._fill_args(step.tool, clauses[index], step.args)
+            if clarification:
+                return {"status": "clarify", "clarification": clarification,
+                        "plan": plan.model_dump(mode="json")}
+            step.args = enriched
+        validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
+        if not validation.valid:
+            return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
+        if not execute:
+            return {"status": "planned", "plan": plan.model_dump(mode="json"),
+                    "validation": validation.model_dump()}
+        if any(self.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM for step in plan.steps) and not confirmed:
+            return {"status": "confirmation_required", "plan": plan.model_dump(mode="json")}
+        result = self.executor.execute_plan(plan, confirmed=confirmed)
+        outcome = "success" if result["status"] == "completed" else "failure"
+        self.store.episode(original, ["L3", "L4", "L5"], plan.model_dump(mode="json"), outcome, result.get("reason"))
+        return {"status": result["status"], "execution": result, "plan": plan.model_dump(mode="json")}
+
+    def create_goal(self, description: str, priority: int, plan: AgentPlan | None) -> str:
+        payload = {"plan": plan.model_dump(mode="json")} if plan else {}
+        goal_id = self.store.add_goal(description, priority, "user", payload)
+        self.store.audit("goal_created", {"goal_id": goal_id, "description": description, "priority": priority})
+        return goal_id
+
+    def undo(self, undo_id: str) -> dict[str, Any]:
+        record = self.store.undo_record(undo_id)
+        if not record:
+            return {"status": "not_found"}
+        if record["status"] != "pending":
+            return {"status": "already_processed", "current_status": record["status"]}
+        try:
+            success = self.executor.adapters.undo(
+                record["action_name"], record["args"], record["before_state"], {},
+            )
+            error = None
+        except Exception as exc:
+            success, error = False, f"{type(exc).__name__}:{exc}"
+        self.store.finish_undo(undo_id, "undone" if success else "failed")
+        self.store.audit("undo_attempted", {"undo_id": undo_id, "success": success, "error": error})
+        return {"status": "undone" if success else "failed", "error": error}
