@@ -43,7 +43,14 @@ def _fullscreen_active(hwnd: int | None) -> bool:
     if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
         return False
     monitor = user32.MonitorFromWindow(hwnd, 2)
-    info = wintypes.MONITORINFO()
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
+    info = MONITORINFO()
     info.cbSize = ctypes.sizeof(info)
     if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
         return False
@@ -128,6 +135,20 @@ class AgentLoop:
                 self._last_battery_check = now
             for event in self.bus.drain(100):
                 self.store.enqueue_event(event.event_type, event.payload)
+                if event.event_type == "foreground_changed":
+                    if event.payload.get("sensitive"):
+                        self.runtime.references.clear()
+                    elif event.payload.get("hwnd") and event.payload.get("title"):
+                        entity = {
+                            "kind": "window", "name": event.payload["title"],
+                            "target": str(event.payload["hwnd"]),
+                            "hwnd": int(event.payload["hwnd"]),
+                        }
+                        self.runtime.references.remember(entity)
+                        self.runtime.index.refresh("window", [{
+                            "name": entity["name"], "target": entity["target"],
+                            "handle": entity["hwnd"],
+                        }])
                 focus = _focus_mode_enabled()
                 foreground = self.runtime.perception.snapshot().get("foreground_window")
                 fullscreen = _fullscreen_active(
