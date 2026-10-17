@@ -19,6 +19,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - WinEvent foreground/window events, process deltas and Downloads completion events.
 - Explicit clipboard metadata and confirmation-gated text reads; clipboard text is excluded from persistent audit/episode records.
 - Explicit-goal continuation and local owner context (time/day/routine state).
+- Owner-confirmed L3 routine execution for safe approved macros, with durable once-per-date claims, inspectable run history and no blind replay after interruption.
 - Global Ctrl+Alt+Pause kill switch, plus opt-in Ctrl+Alt+V push-to-listen voice kill.
 - Rules-first proactive candidate engine; only event candidates are passed to constrained local-model worthiness judgement. Model can veto/refine one suggestion but cannot select tools or act. Focus/fullscreen suppression, cooldowns and persistent annoyance remain deterministic.
 
@@ -158,14 +159,15 @@ Core routes:
 From the repository root in PowerShell:
 
 ~~~powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[windows,media,browser,voice]"
-Copy-Item .env.example .env -ErrorAction SilentlyContinue
+.\scripts\setup-prixon.ps1
 .\scripts\open-prixon.ps1
 ~~~
 
+The setup script creates the local virtual environment and installs the Windows, media and browser adapters. Voice remains opt-in; run `./scripts/setup-prixon-voice.ps1` only when you want local push-to-listen speech.
+
 The UI opens at `http://127.0.0.1:8000/api/v1/agent/ui` unless `API_PORT` is changed in `.env`.
+
+To add a Start Menu shortcut, run `./scripts/install-prixon-startmenu.ps1`.
 
 To launch Prixon automatically at Windows sign-in, run:
 
@@ -173,7 +175,7 @@ To launch Prixon automatically at Windows sign-in, run:
 .\scripts\install-prixon-startup.ps1
 ~~~
 
-Remove automatic startup with `.scripts\uninstall-prixon-startup.ps1`. Server logs are written under `%LOCALAPPDATA%\Prixon\logs`. The task runs as the signed-in user without administrator elevation or a stored password.
+Remove automatic startup with `./scripts/uninstall-prixon-startup.ps1`. Server logs are written under `%LOCALAPPDATA%\Prixon\logs`. The task runs as the signed-in user without administrator elevation or a stored password.
 
 Semantic retrieval is optional. Install `.[semantic]` separately and set `PRIXON_SEMANTIC_ENABLED=true` only when you want to load the local BGE model.
 

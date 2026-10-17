@@ -115,7 +115,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 
 #### Phase 6 — Persistent autonomy loop and governance
 - [x] Persistent goal stack, event bus, WinEvent hooks, process/file/battery observers, periodic privacy-filtered world-state snapshots and rotating/exportable audit records
-- [x] Local-time weekday routine schedules; schedule triggers remain suggestion-only
+- [x] Local-time weekday schedules; suggestion-only by default, with owner-confirmed L3 execution for eligible safe approved macros and once-per-date run claims
 - [x] Priority ordering, wall-clock/step/action budgets and loop abort
 - [x] Global Ctrl+Alt+Pause kill switch
 - [x] Proactive suggestions are suppressed in focus/fullscreen and are suggestion-only
@@ -137,4 +137,4 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 #### Phase 9 — Optional research extensions
 - [ ] LoRA using only reviewed labels and frozen-set evidence
 - [x] Separate 40-case Hindi/Hinglish/Devanagari evaluation corpus and configurable local multilingual embedding model; benchmark comparison still pending
-- [ ] Voice-first interaction and UI polish
+- [x] Opt-in local push-to-listen voice commands and voice kill; [ ] further voice interaction/UI polish
