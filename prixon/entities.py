@@ -18,6 +18,7 @@ class EntityIndex:
 
     def refresh(self, kind: str, entities: list[dict[str, Any]], source: str = "perception") -> int:
         count = 0
+        missing_vectors: list[tuple[tuple[str, str, str], str]] = []
         for entity in entities:
             name, target = str(entity.get("name", "")).strip(), entity.get("target")
             if not name or not target:
@@ -27,8 +28,13 @@ class EntityIndex:
                 normalized = " ".join(name.casefold().split())
                 key = (kind, normalized, str(target))
                 if key not in self._vectors:
-                    self._vectors[key] = self.embedder.embed([name])[0]
+                    missing_vectors.append((key, name))
             count += 1
+        if missing_vectors:
+            vectors = self.embedder.embed([name for _, name in missing_vectors])
+            self._vectors.update({
+                key: vector for (key, _), vector in zip(missing_vectors, vectors, strict=True)
+            })
         return count
 
     def resolve(
@@ -44,9 +50,12 @@ class EntityIndex:
             alias_scope = alias.get("scope") or {}
             if all((context or {}).get(key) == value for key, value in alias_scope.items()):
                 return {
-                "kind": alias["target_type"], "name": mention, "target": alias["target"],
-                "score": alias["confidence"], "matched_by": "owner_alias",
-            }
+                    "kind": alias["target_type"],
+                    "name": mention,
+                    "target": alias["target"],
+                    "score": alias["confidence"],
+                    "matched_by": "owner_alias",
+                }
         best: dict[str, Any] | None = None
         best_score = 0.0
         runner_up = 0.0
