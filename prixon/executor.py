@@ -736,9 +736,30 @@ class ActionExecutor:
                 return {"status": "aborted", "reason": "wall_clock_budget_exceeded", "steps": results}
             if any(not results[dep].get("success") for dep in step.depends_on):
                 return {"status": "blocked", "reason": "dependency_failed", "steps": results}
-            signature = f"{step.tool}|{sorted(step.args.items())}"
+            snapshot = self.perception.snapshot()
+            foreground = snapshot.get("foreground_window") or {}
+            memory = snapshot.get("memory") or {}
+            battery = snapshot.get("battery") or {}
+            observed_state = (
+                foreground.get("handle"),
+                foreground.get("pid"),
+                bool(foreground.get("sensitive")),
+                snapshot.get("process_count"),
+                int(float(snapshot.get("cpu_percent", 0)) // 10),
+                int(float(memory.get("percent", 0)) // 5) if memory else None,
+                int(float(battery.get("percent", 0)) // 5) if battery else None,
+            )
+            argument_state = tuple(
+                sorted((str(key), repr(value)) for key, value in step.args.items())
+            )
+            signature = repr((step.tool, argument_state, observed_state))
             self._seen_steps[signature] = self._seen_steps.get(signature, 0) + 1
             if self._seen_steps[signature] > 2:
+                self.store.audit("plan_loop_detected", {
+                    "goal": plan.goal,
+                    "step_index": index,
+                    "action": step.tool,
+                })
                 return {"status": "aborted", "reason": "loop_detected", "steps": results}
             try:
                 resolved_args = self._resolve_previous_references(step.args, results)
