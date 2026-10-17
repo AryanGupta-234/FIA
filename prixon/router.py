@@ -28,7 +28,7 @@ def classify(text: str) -> IntentClass:
     ):
         return IntentClass.SYSTEM_SETTING
     if re.search(
-        r"^(?:is|check if|whether)\\s+([\\w.-]+(?:\\s+[\\w.-]+){0,3})\\s+(?:is\\s+)?(?:running|open|active)\\b",
+        r"^(?:is|check if|whether)\s+([\w.-]+(?:\s+[\w.-]+){0,3})\s+(?:is\s+)?(?:running|open|active)\b",
         value,
     ):
         return IntentClass.QUERY
@@ -140,7 +140,7 @@ class IntentRouter:
             return 0.0
         if text == target:
             return 1.0
-        if re.search(r"(?<!\\w)" + re.escape(target) + r"(?!\\w)", text):
+        if re.search(r"(?<!\w)" + re.escape(target) + r"(?!\w)", text):
             return 0.92
         tokens = set(target.split())
         words = set(text.split())
