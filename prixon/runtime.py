@@ -549,7 +549,7 @@ class AgentRuntime:
         })
         if not validation.valid:
             return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
-        if not execute and action.risk != RiskTier.READ_ONLY:
+        if not execute:
             return {**preview, "plan": plan.model_dump(mode="json"), "plan_validation": validation.model_dump()}
         confidence = float(preview.get("confidence", 0))
         if action.risk == RiskTier.ALWAYS_CONFIRM and not confirmed:
@@ -706,9 +706,7 @@ class AgentRuntime:
         validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
         if not validation.valid:
             return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
-        if not execute and any(
-            self.registry.get(step.tool).risk != RiskTier.READ_ONLY for step in plan.steps
-        ):
+        if not execute:
             return {"status": "planned", "plan": plan.model_dump(mode="json"),
                     "validation": validation.model_dump()}
         if any(self.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM for step in plan.steps) and not confirmed:
