@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-from difflib import SequenceMatcher
 from typing import Any
 
 from prixon.confidence import DecisionSignals, fuse_confidence, meets_risk_threshold
@@ -20,7 +19,12 @@ from prixon.proactive import ProactiveEngine
 from prixon.registry import ActionRegistry
 from prixon.router import IntentRouter
 from prixon.schemas import (
-    ActionSpec, AgentPlan, IntentClass, PlanStep, RiskTier, ThoughtRecord,
+    ActionSpec,
+    AgentPlan,
+    IntentClass,
+    PlanStep,
+    RiskTier,
+    ThoughtRecord,
 )
 from prixon.store import AgentStore
 
@@ -696,16 +700,13 @@ class AgentRuntime:
         for pending in self.store.pending_learning_signals(older_than=time.time()):
             if pending["session_id"] != session_id:
                 continue
-            previous = " ".join(pending["phrase"].casefold().split())
-            similarity = SequenceMatcher(None, previous, normalized).ratio()
             is_correction = normalized.startswith((
                 "no ", "not ", "stop ", "undo ", "actually ", "i meant ",
                 "i said ", "wrong ", "not that ", "that's not ",
             )) or " i meant " in normalized
             if is_correction:
                 discarded += self.store.discard_pending_learning(signal_id=pending["id"])
-                if is_correction:
-                    self.store.add_negative_example(pending["phrase"], pending["action_name"])
+                self.store.add_negative_example(pending["phrase"], pending["action_name"])
         return discarded
 
     def process_pending_learning(self, delay_seconds: int = 30) -> dict[str, int]:
