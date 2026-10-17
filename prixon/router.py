@@ -28,18 +28,18 @@ def classify(text: str) -> IntentClass:
     ):
         return IntentClass.SYSTEM_SETTING
     if re.search(
-        r"^(?:is|check if|whether)\s+([\w.-]+(?:\s+[\w.-]+){0,3})\s+(?:is\s+)?(?:running|open|active)\b",
+        r"(?:^|\b)(?:is|check if|whether)\s+([\w.-]+(?:\s+[\w.-]+){0,3})\s+(?:is\s+)?(?:running|open|active)\b",
         value,
     ):
         return IntentClass.QUERY
     if any(term in value for term in (
-        "wifi", "wi-fi", "wireless", "battery", "volume", "master audio",
+        "wifi", "wi-fi", "wireless", "battery", "volume", "audio", "master audio",
         "ram", "memory", "cpu", "processor", "network", "internet",
     )):
         if any(term in value for term in (
             "status", "usage", "percentage", "percent", "connected", "connection",
             "running", "free", "available", "how much", "check", "show", "what is",
-            "what's", "remaining", "left",
+            "what's", "current", "remaining", "left",
         )) or value.startswith("is "):
             return IntentClass.QUERY
     if any(term in value for term in (
@@ -50,8 +50,9 @@ def classify(text: str) -> IntentClass:
         return IntentClass.LAUNCH
     if any(term in value for term in (
         "minimize", "maximize", "make this window full size", "restore", "unminimize",
-        "close window", "close this window", "close current window", "close current app", "close it",
-    )) or re.match(r"^close\s+", value):
+        "close window", "close this window", "close current window", "close current app",
+        "close the current app", "close it",
+    )) or re.search(r"\bclose\s+(?:the\s+)?(?:current|this)\s+(?:window|app)\b", value) or re.match(r"^close\s+", value):
         return IntentClass.CONTROL
     if any(term in value for term in (
         "list ", "display ", "show ", "what ", "how ", "is ", "check ",
