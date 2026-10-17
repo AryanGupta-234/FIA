@@ -80,7 +80,7 @@ class AgentRuntime:
         self.semantic: SemanticRetriever | None = None
         if self.settings.semantic_enabled:
             try:
-                self.semantic = SemanticRetriever(self.registry, FastEmbedAdapter())
+                self.semantic = SemanticRetriever(self.registry, FastEmbedAdapter(), self.store)
             except (RuntimeError, OSError, ValueError):
                 logger.exception("Semantic retrieval unavailable; deterministic path remains active")
         self.index = EntityIndex(
@@ -268,7 +268,10 @@ class AgentRuntime:
                 return args, prompt
             args["application"] = mention
             if action_name == "app.launch":
-                entity = self.index.resolve(mention, "application")
+                entity = self.index.resolve(
+                    mention, "application",
+                    context={"foreground_app": (foreground or {}).get("title")},
+                )
                 if not entity:
                     self.refresh_entities()
                     entity = self.index.resolve(mention, "application")
