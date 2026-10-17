@@ -409,8 +409,13 @@ class ActionExecutor:
     def execute_plan(self, plan: AgentPlan, *, confirmed: bool = False) -> dict[str, Any]:
         started = time.monotonic()
         self._seen_steps.clear()
-        if len(plan.steps) > self.budget.max_steps:
-            return {"status": "rejected", "reason": "step_budget_exceeded", "steps": []}
+        from prixon.planner import validate_plan
+        validation = validate_plan(plan, self.registry, self.budget.max_steps)
+        if not validation.valid:
+            return {
+                "status": "rejected", "reason": "plan_validation_failed",
+                "errors": validation.errors, "steps": [],
+            }
         results: list[dict[str, Any]] = []
         for index, step in enumerate(plan.steps):
             if self.kill_switch and self.kill_switch.active:
