@@ -26,6 +26,7 @@ from prixon.schemas import (
     TeachAliasRequest,
 )
 from prixon.store import AgentStore
+from prixon.schemas import RiskTier
 
 router = APIRouter(prefix="/api/v1/agent", tags=["Prixon Agent"])
 
@@ -235,7 +236,17 @@ async def create_goal(payload: GoalCreateRequest) -> dict[str, Any]:
     validation = validate_plan(plan, runtime.registry, runtime.settings.agent_max_plan_steps)
     if not validation.valid:
         raise HTTPException(422, detail={"message": "Invalid goal plan.", "errors": validation.errors})
-    goal_id = runtime.create_goal(payload.description, payload.priority, plan)
+    if any(
+        runtime.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM
+        for step in plan.steps
+    ) and not payload.confirmed:
+        raise HTTPException(
+            409,
+            detail={"message": "This goal contains an L4 action. Review and resubmit the complete plan with confirmed=true."},
+        )
+    goal_id = runtime.create_goal(
+        payload.description, payload.priority, plan, confirmed=payload.confirmed,
+    )
     return {
         "id": goal_id,
         "status": "pending",
