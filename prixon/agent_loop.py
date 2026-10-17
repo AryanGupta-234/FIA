@@ -88,21 +88,30 @@ class AgentLoop:
     def suggestions(self) -> list[dict[str, Any]]:
         return list(self._suggestions)
 
-    async def start(self) -> dict[str, Any]:
-        if self.running:
-            return {"status": "already_running"}
-        self.runtime.kill_switch.reset()
-        self._running = True
+    def recover_interrupted_goals(self) -> int:
         interrupted = self.store.goals(("active",))
         for goal in interrupted:
             self.store.set_goal_status(goal["id"], "blocked")
             self.store.audit("goal_interrupted_by_restart", {
                 "goal_id": goal["id"], "description": goal["description"],
             })
-        for event in self.store.pending_events(limit=500):
+        return len(interrupted)
+
+    def replay_persisted_events(self, limit: int = 500) -> int:
+        events = self.store.pending_events(limit=limit)
+        for event in events:
             self.bus.publish(
                 event["event_type"], event["payload"], persisted_id=event["id"],
             )
+        return len(events)
+
+    async def start(self) -> dict[str, Any]:
+        if self.running:
+            return {"status": "already_running"}
+        self.runtime.kill_switch.reset()
+        self._running = True
+        interrupted_count = self.recover_interrupted_goals()
+        replayed_count = self.replay_persisted_events()
         await self.process_observer.start()
         self.window_observer.start()
         downloads_watched = self.file_observer.start()
@@ -111,11 +120,15 @@ class AgentLoop:
         self.store.audit("agent_loop_started", {
             "global_hotkey_registered": hotkey_registered,
             "downloads_watched": downloads_watched,
+            "interrupted_goals": interrupted_count,
+            "replayed_events": replayed_count,
         })
         return {
             "status": "started",
             "global_hotkey": "Ctrl+Alt+Pause" if hotkey_registered else "unavailable",
             "downloads_watched": downloads_watched,
+            "interrupted_goals": interrupted_count,
+            "replayed_events": replayed_count,
         }
 
     async def stop(self, reason: str = "owner_requested") -> dict[str, Any]:
