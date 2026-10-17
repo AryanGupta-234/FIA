@@ -37,7 +37,10 @@ class OllamaClient:
         self.model = model
         self.timeout_seconds = max(1.0, timeout_seconds)
         self.keep_alive = keep_alive
+        # The design target is roughly 1.5k prompt tokens for decide-sized calls.
+        # Keep the static prefix stable and reserve the remainder for request data.
         self.max_prompt_chars = 6000
+        self.max_system_prompt_chars = 1800
         self.last_metrics: dict[str, Any] = {}
         self.call_count = 0
         self.successful_call_count = 0
@@ -140,8 +143,9 @@ class OllamaClient:
         self, system: str, prompt: str, schema: dict[str, Any],
         *, max_tokens: int = 384, temperature: float = 0.0,
     ) -> dict[str, Any]:
-        system = system[:self.max_prompt_chars]
-        prompt = prompt[:self.max_prompt_chars]
+        system = system[:self.max_system_prompt_chars]
+        prompt_capacity = max(0, self.max_prompt_chars - len(system))
+        prompt = prompt[:prompt_capacity]
         budget_state = self._request_budget.get()
         requested_tokens = max(1, int(max_tokens))
         if budget_state is not None:
