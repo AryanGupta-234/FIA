@@ -29,15 +29,19 @@ class OwnerLexicon:
         self.store.audit("alias_explicitly_taught", {"phrase": phrase, "target": action_name})
         return LearningResult("promoted", phrase, action_name, 1.0, 1)
 
+    def teach_entity(self, phrase: str, entity_type: str, target: str) -> None:
+        if entity_type not in {"application", "window", "folder", "file", "setting"}:
+            raise ValueError("Unsupported entity alias type")
+        self.store.put_alias(
+            phrase, entity_type, target, confidence=1.0, explicit=True,
+        )
+        self.store.audit("entity_alias_explicitly_taught", {
+            "phrase": phrase, "entity_type": entity_type, "target": target,
+        })
+
     def observe(
-        self,
-        phrase: str,
-        action_name: str,
-        *,
-        success: bool,
-        session_id: str,
-        risk: RiskTier,
-        explicit: bool = False,
+        self, phrase: str, action_name: str, *, success: bool,
+        session_id: str, risk: RiskTier, explicit: bool = False,
     ) -> LearningResult:
         if explicit and success:
             return self.teach(phrase, action_name)
@@ -47,24 +51,39 @@ class OwnerLexicon:
         if stats["confidence"] < 0.5:
             self.store.remove_alias(phrase)
             status = "demoted"
-        elif (
-            stats["confidence"] >= self.promotion_threshold
-            and session_count >= 3
-            and not high_risk
-        ):
+        elif stats["confidence"] >= self.promotion_threshold and session_count >= 3 and not high_risk:
             self.store.put_alias(
-                phrase, "action", action_name,
-                confidence=stats["confidence"], explicit=False,
+                phrase, "action", action_name, confidence=stats["confidence"], explicit=False,
             )
             status = "promoted"
         else:
             status = "candidate"
         self.store.audit("alias_learning_observation", {
-            "phrase": stats["phrase"], "target": action_name,
-            "success": success, "confidence": stats["confidence"],
-            "session_count": session_count, "status": status,
+            "phrase": stats["phrase"], "target": action_name, "success": success,
+            "confidence": stats["confidence"], "session_count": session_count, "status": status,
         })
         return LearningResult(status, stats["phrase"], action_name, stats["confidence"], session_count)
+
+    def consolidate(self) -> dict[str, int]:
+        decayed = 0
+        demoted = 0
+        import time
+        now = time.time()
+        for row in self.store.alias_candidates():
+            elapsed_days = max(0.0, (now - row["last_updated"]) / 86400)
+            factor = 0.5 ** (elapsed_days / 60.0)
+            successes = row["successes"] * factor
+            failures = row["failures"] * factor
+            confidence = (successes + 1) / (successes + failures + 2)
+            self.store.update_alias_candidate(
+                row["phrase"], row["target"], successes, failures, row["sessions"], now,
+            )
+            decayed += 1
+            if confidence < 0.5:
+                self.store.remove_alias(row["phrase"])
+                demoted += 1
+        self.store.audit("lexicon_consolidated", {"candidates_decayed": decayed, "aliases_demoted": demoted})
+        return {"candidates_decayed": decayed, "aliases_demoted": demoted}
 
     def lookup(self, phrase: str) -> dict | None:
         return self.store.alias(phrase)
