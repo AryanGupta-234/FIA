@@ -1,4 +1,7 @@
-from prixon.benchmark import summarize_benchmark_rows
+import asyncio
+from collections import deque
+
+from prixon.benchmark import benchmark_runtime, summarize_benchmark_rows
 from prixon.ollama import OllamaClient
 
 
@@ -42,3 +45,50 @@ def test_benchmark_summary_calculates_latency_and_local_model_share():
     assert report["latency_ms"] == {"p50": 20.0, "p95": 40.0, "mean": 25.0, "max": 40.0}
     assert report["prompt_tokens"] == 13
     assert report["completion_tokens"] == 7
+
+def test_runtime_benchmark_uses_preview_only_and_captures_local_model_usage():
+    class FakeOllama:
+        model = "local-test-model"
+        base_url = "http://127.0.0.1:11434"
+        call_count = 0
+        metrics_history = deque(maxlen=10)
+
+    class ForbiddenExecutor:
+        def execute_action(self, *args, **kwargs):
+            raise AssertionError("Preview benchmark must never execute an action.")
+
+        def execute_plan(self, *args, **kwargs):
+            raise AssertionError("Preview benchmark must never execute a plan.")
+
+    class FakeRuntime:
+        def __init__(self):
+            self.ollama = FakeOllama()
+            self.executor = ForbiddenExecutor()
+
+        async def preview(self, text):
+            self.ollama.call_count += 1
+            self.ollama.metrics_history.append({
+                "call_index": self.ollama.call_count,
+                "prompt_eval_count": 11,
+                "eval_count": 4,
+            })
+            return {
+                "status": "selected",
+                "action": "system.status",
+                "reason": "rules_first_registry_match",
+            }
+
+    runtime = FakeRuntime()
+    report = asyncio.run(benchmark_runtime(runtime, [{
+        "text": "show system health",
+        "expected_action": "system.status",
+        "split": "frozen",
+        "case_type": "clean",
+    }]))
+    assert report["mode"] == "preview_only_no_actions_executed"
+    assert report["summary"]["requests"] == 1
+    assert report["summary"]["accuracy"] == 1.0
+    assert report["summary"]["llm_calls"] == 1
+    assert report["summary"]["prompt_tokens"] == 11
+    assert report["summary"]["completion_tokens"] == 4
+    assert report["by_split"]["frozen"]["requests"] == 1
