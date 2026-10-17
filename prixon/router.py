@@ -40,8 +40,9 @@ def classify(text: str) -> IntentClass:
 class IntentRouter:
     """Rules-first registry retrieval with class filters and explicit hard negatives."""
 
-    def __init__(self, registry: ActionRegistry | None = None) -> None:
+    def __init__(self, registry: ActionRegistry | None = None, store=None) -> None:
         self.registry = registry or ActionRegistry()
+        self.store = store
 
     def route(self, utterance: str) -> RouteResult:
         normalized = normalize(utterance)
@@ -58,6 +59,12 @@ class IntentRouter:
                 continue
             phrases = (action.name.replace(".", " "), *action.examples)
             best = max((self._phrase_score(normalized, phrase) for phrase in phrases), default=0)
+            if self.store is not None and best > 0:
+                for negative in self.store.negative_examples():
+                    if negative["action_name"] == action.name:
+                        similarity = self._phrase_score(normalized, negative["phrase"])
+                        if similarity >= 0.45:
+                            best = max(0.0, best - (negative["penalty"] * similarity))
             if best > 0:
                 candidates.append(Candidate(action=action, score=best, matched_by="lexical"))
 
