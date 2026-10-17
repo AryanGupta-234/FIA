@@ -130,7 +130,7 @@ class AgentLoop:
         downloads_watched = self.file_observer.start()
         process_exit_observer = self.termination_observer.start()
         hotkey_registered = self.hotkey.start()
-        voice_status = self.voice_kill.start()
+        voice_status = await asyncio.to_thread(self.voice_kill.start)
         self._task = asyncio.create_task(self._run(), name="PrixonAgentLoop")
         self.store.audit("agent_loop_started", {
             "global_hotkey_registered": hotkey_registered,
@@ -166,7 +166,7 @@ class AgentLoop:
         self.file_observer.stop()
         self.termination_observer.stop()
         self.hotkey.stop()
-        self.voice_kill.stop()
+        await asyncio.to_thread(self.voice_kill.stop)
         self.store.audit("agent_loop_stopped", {"reason": reason})
         return {"status": "stopped", "reason": reason}
 

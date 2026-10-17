@@ -32,6 +32,9 @@ class VoiceKillListener:
         "prix on halt", "prixon halt",
         "prix on abort", "prixon abort",
         "prix on emergency stop", "prixon emergency stop",
+        "pryson stop", "price on stop", "prison stop",
+        "stop prixon", "stop prixon", "stop pryson",
+        "halt prixon", "abort prixon",
         "[unk]",
     ]
     KILL_PHRASES = {
@@ -39,6 +42,9 @@ class VoiceKillListener:
         "prix on halt", "prixon halt",
         "prix on abort", "prixon abort",
         "prix on emergency stop", "prixon emergency stop",
+        "pryson stop", "price on stop", "prison stop",
+        "stop prixon", "stop prixon", "stop pryson",
+        "halt prixon", "abort prixon",
     }
 
     def __init__(
@@ -58,6 +64,8 @@ class VoiceKillListener:
         self._recognizer_type = None
         self._thread: threading.Thread | None = None
         self._capture_thread: threading.Thread | None = None
+        self._stream = None
+        self._stream_lock = threading.Lock()
         self._started = threading.Event()
         self._stop = threading.Event()
         self._capture_lock = threading.Lock()
@@ -124,6 +132,17 @@ class VoiceKillListener:
 
     def stop(self) -> None:
         self._stop.set()
+        with self._stream_lock:
+            stream = self._stream
+        if stream is not None:
+            try:
+                stream.abort()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
         if self._thread_id and os.name == "nt":
             import ctypes
             ctypes.windll.user32.PostThreadMessageW(self._thread_id, self.WM_QUIT, 0, 0)
@@ -185,16 +204,24 @@ class VoiceKillListener:
             )
             recognized: list[str] = []
             deadline = time.monotonic() + self.capture_seconds
-            with self._sounddevice.RawInputStream(
+            stream = self._sounddevice.RawInputStream(
                 samplerate=self.SAMPLE_RATE,
                 blocksize=self.BLOCK_SIZE,
                 dtype="int16",
                 channels=1,
-            ) as stream:
-                while time.monotonic() < deadline and not self._stop.is_set():
-                    audio, _overflowed = stream.read(self.BLOCK_SIZE)
-                    if recognizer.AcceptWaveform(audio):
-                        recognized.append(str(json.loads(recognizer.Result()).get("text", "")))
+            )
+            with self._stream_lock:
+                self._stream = stream
+            try:
+                with stream:
+                    while time.monotonic() < deadline and not self._stop.is_set():
+                        audio, _overflowed = stream.read(self.BLOCK_SIZE)
+                        if recognizer.AcceptWaveform(audio):
+                            recognized.append(str(json.loads(recognizer.Result()).get("text", "")))
+            finally:
+                with self._stream_lock:
+                    if self._stream is stream:
+                        self._stream = None
             final = json.loads(recognizer.FinalResult())
             recognized.append(str(final.get("text", "")))
             phrase = self._normalize_phrase(" ".join(recognized))
