@@ -65,13 +65,11 @@ class OwnerLexicon:
         session_count = len(stats["sessions"])
         high_risk = risk == RiskTier.ALWAYS_CONFIRM
         if stats["confidence"] < 0.5:
-            self.store.remove_alias(phrase)
+            self.store.remove_alias_if_implicit(phrase)
             status = "demoted"
         elif stats["confidence"] >= self.promotion_threshold and session_count >= 3 and not high_risk:
-            self.store.put_alias(
-                phrase, "action", action_name, confidence=stats["confidence"], explicit=False,
-            )
-            status = "promoted"
+            # Implicit outcomes are proposals only; owner approval is a separate API action.
+            status = "promotion_ready"
         else:
             status = "candidate"
         self.store.audit("alias_learning_observation", {
