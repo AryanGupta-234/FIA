@@ -57,6 +57,16 @@ class WindowsActionAdapters:
 
     def __init__(self, perception: WindowsPerception) -> None:
         self.perception = perception
+        self._uia_cache: dict[int, tuple[float, list[dict[str, str]]]] = {}
+        self._uia_cache_lock = threading.Lock()
+        self._uia_cache_ttl_seconds = 3.0
+
+    def invalidate_window_cache(self, hwnd: int | None = None) -> None:
+        with self._uia_cache_lock:
+            if hwnd is None:
+                self._uia_cache.clear()
+            else:
+                self._uia_cache.pop(int(hwnd), None)
 
     def capture_before(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
         if action.startswith("window."):
@@ -198,9 +208,15 @@ class WindowsActionAdapters:
     def describe_window_controls(
         self, hwnd: int, limit: int = 12,
     ) -> list[dict[str, str]]:
-        """Return a tiny safe summary of actionable UIA controls, never form/text values."""
+        """Return a cached tiny UIA summary, never raw UI trees or form/text values."""
         if os.name != "nt" or not hwnd:
             return []
+        cache_key = int(hwnd)
+        now = time.monotonic()
+        with self._uia_cache_lock:
+            cached = self._uia_cache.get(cache_key)
+            if cached and now - cached[0] <= self._uia_cache_ttl_seconds:
+                return [dict(item) for item in cached[1][:max(1, min(limit, 12))]]
         windows = self.perception.open_windows(limit=100)
         target = next((item for item in windows if item.get("handle") == int(hwnd)), None)
         if target is None or target.get("sensitive"):
@@ -251,6 +267,14 @@ class WindowsActionAdapters:
                     break
             except Exception:
                 continue
+        with self._uia_cache_lock:
+            self._uia_cache[cache_key] = (time.monotonic(), [dict(item) for item in result])
+        # Keep the cache bounded even when many short-lived windows are created.
+        if len(self._uia_cache) > 100:
+            oldest = sorted(self._uia_cache, key=lambda key: self._uia_cache[key][0])[:25]
+            with self._uia_cache_lock:
+                for key in oldest:
+                    self._uia_cache.pop(key, None)
         return result
 
     def _execute_keyboard(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
