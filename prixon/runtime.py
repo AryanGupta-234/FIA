@@ -49,7 +49,6 @@ class AgentRuntime:
         self.store = store or AgentStore()
         self.registry = registry or ActionRegistry()
         self.perception = perception or WindowsPerception()
-        self.index = EntityIndex(self.store)
         self.references = ReferenceResolver()
         self.lexicon = OwnerLexicon(self.store)
         self.ollama = ollama or OllamaClient(
@@ -72,6 +71,9 @@ class AgentRuntime:
                 self.semantic = SemanticRetriever(self.registry, FastEmbedAdapter())
             except (RuntimeError, OSError, ValueError):
                 logger.exception("Semantic retrieval unavailable; deterministic path remains active")
+        self.index = EntityIndex(
+            self.store, self.semantic.embedder if self.semantic is not None else None,
+        )
         self._suggestions: list[dict[str, Any]] = []
         self._loop = None
         self._entity_refresh_at = 0.0
@@ -87,7 +89,9 @@ class AgentRuntime:
                 RiskTier.READ_ONLY: 0, RiskTier.REVERSIBLE: 1,
                 RiskTier.ROUTINE: 2, RiskTier.ALWAYS_CONFIRM: 3,
             }
-            risk = max(risk_values, key=lambda value: risk_order[value]) if risk_values else RiskTier.ALWAYS_CONFIRM
+            inherited_risk = max(risk_values, key=lambda value: risk_order[value]) if risk_values else RiskTier.ALWAYS_CONFIRM
+            # Owner approval permits L3 only when no constituent action is L4.
+            risk = RiskTier.ALWAYS_CONFIRM if inherited_risk == RiskTier.ALWAYS_CONFIRM else RiskTier.ROUTINE
             groups: dict[IntentClass, list[str]] = {}
             for phrase in macro["trigger_phrases"]:
                 intent = classify(phrase)
@@ -204,6 +208,8 @@ class AgentRuntime:
     def situation(self) -> dict[str, Any]:
         snapshot = self.perception.snapshot()
         foreground = snapshot.get("foreground_window")
+        if foreground and foreground.get("sensitive"):
+            foreground = None
         return {
             "foreground_app": foreground,
             "open_windows": [foreground] if foreground else [],
@@ -258,10 +264,17 @@ class AgentRuntime:
             if args.get("hwnd") == "$previous.hwnd":
                 args["window"] = args.get("window", "$previous.window")
                 return args, None
-            if not foreground or not foreground.get("handle"):
+            if foreground and foreground.get("sensitive"):
+                return args, "This window is classified as a sensitive credential or authentication dialog and is off-limits."
+            recent = self.references.resolve("it") if re.search(r"\b(it|that|this|that one)\b", text, re.I) else None
+            if recent and recent.get("hwnd"):
+                args["window"] = str(recent.get("name") or "recent window")
+                args["hwnd"] = int(recent["hwnd"])
+            elif foreground and foreground.get("handle") and not foreground.get("sensitive"):
+                args["window"] = str(foreground.get("title") or foreground["handle"])
+                args["hwnd"] = int(foreground["handle"])
+            else:
                 return args, "There is no grounded foreground window to control."
-            args["window"] = str(foreground.get("title") or foreground["handle"])
-            args["hwnd"] = int(foreground["handle"])
         elif action_name == "volume.set":
             if "level" not in args:
                 match = re.search(r"\b(\d{1,3})\s*%?", text)
@@ -345,12 +358,19 @@ class AgentRuntime:
                     action = self.registry.get(str(arbitration.get("action")))
                     if action:
                         confidence_hint = float(arbitration.get("confidence", 0))
+                        if arbitration.get("clarification"):
+                            return {
+                                "status": "clarify",
+                                "reason": "model_requested_clarification",
+                                "clarification": str(arbitration["clarification"]),
+                                "candidates": [candidate.model_dump(mode="json") for candidate in route.candidates],
+                            }
                         if confidence_hint < 0.65:
                             second = await self.ollama.arbitrate(
                                 text, tools, self.situation(), self.store.recent_episodes(3),
                                 temperature=0.1,
                             )
-                            if second.get("action") != arbitration.get("action"):
+                            if second.get("clarification") or second.get("action") != arbitration.get("action"):
                                 return {
                                     "status": "clarify",
                                     "reason": "low_confidence_self_consistency_disagreement",
@@ -423,6 +443,21 @@ class AgentRuntime:
     ) -> dict[str, Any]:
         matching_macro = self.matching_approved_macro(text)
         if matching_macro is not None:
+            macro_preview = await self.preview(text)
+            macro_action = self.registry.get(str(macro_preview.get("action") or ""))
+            if (
+                macro_preview.get("status") != "selected"
+                or self._macro_id_for_action(str(macro_preview.get("action") or "")) != matching_macro
+                or macro_action is None
+                or (execute and not meets_risk_threshold(
+                    float(macro_preview.get("confidence", 0.0)), RiskTier.ROUTINE.value,
+                ))
+            ):
+                return {
+                    "status": "clarify",
+                    "reason": "approved_macro_trigger_below_confidence_gate",
+                    "confidence": macro_preview.get("confidence", 0.0),
+                }
             return await self.run_macro(
                 matching_macro, args or {}, execute=execute,
                 confirmed=confirmed, session_id=session_id,
