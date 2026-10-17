@@ -5,6 +5,8 @@ import logging
 import math
 import time
 from collections import deque
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -43,6 +45,23 @@ class OllamaClient:
         self.json_valid_count = 0
         self.json_invalid_count = 0
         self.metrics_history: deque[dict[str, Any]] = deque(maxlen=2000)
+        self._request_budget: ContextVar[dict[str, int] | None] = ContextVar(
+            f"prixon_ollama_budget_{id(self)}", default=None,
+        )
+
+    @asynccontextmanager
+    async def request_budget(self, max_tokens: int):
+        """Share a generation-token allowance across every LLM call in one request."""
+        existing = self._request_budget.get()
+        if existing is not None:
+            yield existing
+            return
+        state = {"limit": max(1, int(max_tokens)), "used": 0}
+        context_token = self._request_budget.set(state)
+        try:
+            yield state
+        finally:
+            self._request_budget.reset(context_token)
 
     def metrics_summary(self) -> dict[str, Any]:
         calls = list(self.metrics_history)
@@ -123,12 +142,24 @@ class OllamaClient:
     ) -> dict[str, Any]:
         system = system[:self.max_prompt_chars]
         prompt = prompt[:self.max_prompt_chars]
+        budget_state = self._request_budget.get()
+        requested_tokens = max(1, int(max_tokens))
+        if budget_state is not None:
+            remaining_tokens = budget_state["limit"] - budget_state["used"]
+            if remaining_tokens <= 0:
+                raise RuntimeError("model_token_budget_exceeded")
+            allocated_tokens = min(requested_tokens, remaining_tokens)
+        else:
+            allocated_tokens = requested_tokens
         payload = {
             "model": self.model,
             "stream": False,
             "format": schema,
             "keep_alive": self.keep_alive,
-            "options": {"temperature": max(0.0, min(0.3, temperature)), "num_predict": max_tokens},
+            "options": {
+                "temperature": max(0.0, min(0.3, temperature)),
+                "num_predict": allocated_tokens,
+            },
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
@@ -166,6 +197,15 @@ class OllamaClient:
             self.json_valid_count += 1
         except Exception as exc:
             self.failed_call_count += 1
+            used_tokens = data.get("eval_count")
+            charged_tokens = (
+                min(allocated_tokens, max(0, int(used_tokens)))
+                if used_tokens is not None else allocated_tokens
+            )
+            if budget_state is not None:
+                budget_state["used"] = min(
+                    budget_state["limit"], budget_state["used"] + charged_tokens,
+                )
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
             self.last_metrics = {
                 "call_index": call_index,
@@ -177,6 +217,10 @@ class OllamaClient:
                 "success": False,
                 "json_valid": json_valid,
                 "error": type(exc).__name__,
+                "max_tokens_requested": requested_tokens,
+                "max_tokens_allocated": allocated_tokens,
+                "request_budget_limit": budget_state["limit"] if budget_state is not None else None,
+                "request_budget_used": budget_state["used"] if budget_state is not None else None,
                 "keep_alive": self.keep_alive,
             }
             self.metrics_history.append(dict(self.last_metrics))
@@ -184,6 +228,15 @@ class OllamaClient:
             raise
 
         self.successful_call_count += 1
+        used_tokens = data.get("eval_count")
+        charged_tokens = (
+            min(allocated_tokens, max(0, int(used_tokens)))
+            if used_tokens is not None else allocated_tokens
+        )
+        if budget_state is not None:
+            budget_state["used"] = min(
+                budget_state["limit"], budget_state["used"] + charged_tokens,
+            )
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
         self.last_metrics = {
             "call_index": call_index,
@@ -198,6 +251,10 @@ class OllamaClient:
             "eval_count": data.get("eval_count"),
             "success": True,
             "json_valid": True,
+            "max_tokens_requested": requested_tokens,
+            "max_tokens_allocated": allocated_tokens,
+            "request_budget_limit": budget_state["limit"] if budget_state is not None else None,
+            "request_budget_used": budget_state["used"] if budget_state is not None else None,
             "keep_alive": self.keep_alive,
         }
         self.metrics_history.append(dict(self.last_metrics))
