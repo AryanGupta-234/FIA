@@ -20,7 +20,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - Explicit clipboard metadata and confirmation-gated text reads; clipboard text is excluded from persistent audit/episode records.
 - Explicit-goal continuation and local owner context (time/day/routine state).
 - Global Ctrl+Alt+Pause kill switch, plus opt-in Ctrl+Alt+V push-to-listen voice kill.
-- Suggest-only proactive engine with cooldown, focus/fullscreen suppression and persistent annoyance.
+- Rules-first proactive candidate engine; only event candidates are passed to constrained local-model worthiness judgement. Model can veto/refine one suggestion but cannot select tools or act. Focus/fullscreen suppression, cooldowns and persistent annoyance remain deterministic.
 
 ### Safe execution
 - Typed action contracts with slots, preconditions, postconditions, undo support, risk, per-action timeouts, idempotency, retry policy and automation tiers.

@@ -32,18 +32,21 @@ class ProactiveEngine:
         self._recent_suggestions: list[float] = store.get_setting("proactive.recent", [])
         self._pending: dict[str, float] = store.get_setting("proactive.pending", {})
 
-    def evaluate(
+    def candidate(
         self, event_type: str, payload: dict[str, Any], *,
         focus_mode: bool = False, fullscreen: bool = False, now: float | None = None,
     ) -> Suggestion | None:
+        """Return a rule-triggered candidate without committing an interruption."""
         now = now or time.time()
         self._expire_ignored(now)
         self._decay_annoyance(now)
+        self._recent_suggestions = [
+            stamp for stamp in self._recent_suggestions if now - stamp < 3600
+        ]
         if focus_mode or fullscreen:
             return None
         if now - self._last_trigger.get(event_type, 0) < self.cooldown_seconds:
             return None
-        self._recent_suggestions = [stamp for stamp in self._recent_suggestions if now - stamp < 3600]
         if self._annoyance >= 3 or len(self._recent_suggestions) >= self.max_interruptions_per_hour:
             self._persist()
             return None
@@ -72,20 +75,65 @@ class ProactiveEngine:
             )
         if not candidate:
             return None
+        return Suggestion(
+            trigger=event_type,
+            title=candidate[0],
+            message=candidate[1],
+            created_at=now,
+            score=max(0.0, 1.0 - self._annoyance * 0.2),
+        )
 
-        self._last_trigger[event_type] = now
+    def commit_candidate(
+        self, suggestion: Suggestion, *, message: str | None = None,
+        model_reason: str | None = None,
+    ) -> Suggestion | None:
+        now = float(suggestion.created_at)
+        trigger = suggestion.trigger
+        if now - self._last_trigger.get(trigger, 0) < self.cooldown_seconds:
+            return None
+        self._last_trigger[trigger] = now
+        self._recent_suggestions = [
+            stamp for stamp in self._recent_suggestions if now - stamp < 3600
+        ]
+        if len(self._recent_suggestions) >= self.max_interruptions_per_hour:
+            self._persist()
+            return None
         self._recent_suggestions.append(now)
-        self._pending[event_type] = now
-        suggestion = Suggestion(
-            trigger=event_type, title=candidate[0], message=candidate[1],
-            created_at=now, score=max(0.0, 1.0 - self._annoyance * 0.2),
+        self._pending[trigger] = now
+        refined_message = " ".join(str(message or suggestion.message).split())[:220]
+        committed = Suggestion(
+            trigger=trigger, title=suggestion.title,
+            message=refined_message or suggestion.message,
+            created_at=now, score=suggestion.score,
         )
         self.store.audit("proactive_suggestion", {
-            "trigger": event_type, "title": suggestion.title,
-            "message": suggestion.message, "score": suggestion.score,
+            "trigger": trigger, "title": committed.title,
+            "message": committed.message, "score": committed.score,
+            "model_reason": str(model_reason or "")[:180],
         })
         self._persist()
-        return suggestion
+        return committed
+
+    def suppress_candidate(
+        self, suggestion: Suggestion, reason: str,
+    ) -> None:
+        # A model veto or model outage is not counted as owner dismissal/annoyance.
+        self._last_trigger[suggestion.trigger] = float(suggestion.created_at)
+        self.store.audit("proactive_candidate_suppressed", {
+            "trigger": suggestion.trigger,
+            "reason": str(reason)[:120],
+        })
+        self._persist()
+
+    def evaluate(
+        self, event_type: str, payload: dict[str, Any], *,
+        focus_mode: bool = False, fullscreen: bool = False, now: float | None = None,
+    ) -> Suggestion | None:
+        """Synchronous compatibility path for deterministic callers; production loop uses LLM judgement."""
+        candidate = self.candidate(
+            event_type, payload, focus_mode=focus_mode, fullscreen=fullscreen, now=now,
+        )
+        return self.commit_candidate(candidate) if candidate else None
 
     def record_response(self, trigger: str, accepted: bool) -> None:
         self._pending.pop(trigger, None)

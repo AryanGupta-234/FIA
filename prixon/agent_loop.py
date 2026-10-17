@@ -332,18 +332,54 @@ class AgentLoop:
                 fullscreen = _fullscreen_active(
                     int(foreground["handle"]) if foreground and foreground.get("handle") else None
                 )
-                suggestion = self.runtime.proactive.evaluate(
+                candidate = self.runtime.proactive.candidate(
                     event.event_type, event.payload,
                     focus_mode=focus, fullscreen=fullscreen,
                 )
-                if suggestion:
-                    item = {
-                        "trigger": suggestion.trigger, "title": suggestion.title,
-                        "message": suggestion.message, "created_at": suggestion.created_at,
-                        "score": suggestion.score,
-                    }
-                    self._suggestions.append(item)
-                    self._suggestions = self._suggestions[-50:]
+                if candidate:
+                    try:
+                        foreground = foreground or {}
+                        compact_situation = {
+                            "foreground_app": {
+                                key: foreground.get(key)
+                                for key in ("title", "pid", "sensitive")
+                                if key in foreground
+                            } if not foreground.get("sensitive") else None,
+                            "local_time": time.strftime("%H:%M"),
+                            "weekday": time.strftime("%A"),
+                            "owner_busy": bool(focus or fullscreen),
+                        }
+                        async with self.runtime.ollama.request_budget(128):
+                            judgement = await self.runtime.ollama.assess_proactive(
+                                trigger=candidate.trigger,
+                                candidate_title=candidate.title,
+                                candidate_message=candidate.message,
+                                situation=compact_situation,
+                            )
+                        if judgement.get("worth_interrupting"):
+                            suggestion = self.runtime.proactive.commit_candidate(
+                                candidate,
+                                message=judgement.get("message") or candidate.message,
+                                model_reason=judgement.get("reason"),
+                            )
+                        else:
+                            self.runtime.proactive.suppress_candidate(
+                                candidate, judgement.get("reason") or "model_veto",
+                            )
+                            suggestion = None
+                    except Exception as exc:
+                        self.runtime.proactive.suppress_candidate(
+                            candidate, f"local_judgement_unavailable:{type(exc).__name__}",
+                        )
+                        suggestion = None
+                    if suggestion:
+                        item = {
+                            "trigger": suggestion.trigger, "title": suggestion.title,
+                            "message": suggestion.message, "created_at": suggestion.created_at,
+                            "score": suggestion.score,
+                        }
+                        self._suggestions.append(item)
+                        self._suggestions = self._suggestions[-50:]
                 self.store.mark_event_processed(persisted_id)
             self._emit_due_routines()
             if now - self._last_consolidation >= 86400:
