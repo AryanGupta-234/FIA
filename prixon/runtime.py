@@ -1079,6 +1079,7 @@ class AgentRuntime:
         if len(plan.steps) != len(clauses):
             return {"status": "clarify", "reason": "plan_clause_count_mismatch",
                     "clarification": "Please separate the requested steps more clearly."}
+        step_decisions: dict[int, dict[str, Any]] = {}
         for index, step in enumerate(plan.steps):
             action = self.registry.get(step.tool)
             if action is None:
@@ -1130,7 +1131,7 @@ class AgentRuntime:
                 "user_lexicon_hit": 0.0,
             }
             step.confidence = fuse_confidence(DecisionSignals(**signal_values))
-            self._record_decision(
+            step_decision_id = self._record_decision(
                 utterance=clauses[index],
                 status="selected",
                 intent_class=route.intent_class.value if route.intent_class else None,
@@ -1141,20 +1142,43 @@ class AgentRuntime:
                 confidence_signals=signal_values,
                 candidate_actions=[candidate.action.name for candidate in route.candidates],
             )
+            step_decisions[index] = {
+                "decision_id": step_decision_id,
+                "action": action.name,
+                "risk": action.risk.value,
+                "confidence": step.confidence,
+                "confidence_signals": signal_values,
+                "confidence_weights": dict(DEFAULT_WEIGHTS),
+                "layer_timings_ms": {"compound_step_grounding_ms": 0.0},
+            }
             if action.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(
                 step.confidence, action.risk.value,
             ):
+                for decision in step_decisions.values():
+                    self._record_decision_outcome(
+                        decision, outcome="blocked_by_compound_risk_gate",
+                        detail=f"step:{index}:{action.risk.value}",
+                    )
                 return {
                     "status": "clarify", "reason": "compound_step_below_risk_threshold",
                     "step": index, "confidence": step.confidence, "risk": action.risk.value,
                 }
         validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
         if not validation.valid:
+            for decision in step_decisions.values():
+                self._record_decision_outcome(
+                    decision, outcome="compound_plan_rejected",
+                    detail=";".join(validation.errors),
+                )
             return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
         if not execute:
+            for decision in step_decisions.values():
+                self._record_decision_outcome(decision, outcome="compound_preview_only")
             return {"status": "planned", "plan": plan.model_dump(mode="json"),
                     "validation": validation.model_dump()}
         if any(self.registry.get(step.tool).risk == RiskTier.ALWAYS_CONFIRM for step in plan.steps) and not confirmed:
+            for decision in step_decisions.values():
+                self._record_decision_outcome(decision, outcome="compound_confirmation_required")
             return {"status": "confirmation_required", "plan": plan.model_dump(mode="json")}
         deadline = time.monotonic() + self.executor.budget.wall_clock_seconds
         result = self.executor.execute_plan(
@@ -1209,6 +1233,34 @@ class AgentRuntime:
             self.store.audit("compound_partial_recovery_finished", {
                 "goal": original, "result": self._safe_execution_audit(result),
             })
+        executed_by_index = {
+            int(item["index"]): item
+            for item in result.get("steps", [])
+            if isinstance(item, dict) and item.get("index") is not None
+        }
+        for index, decision in step_decisions.items():
+            item = executed_by_index.get(index)
+            if item is None:
+                self._record_decision_outcome(
+                    decision, outcome="not_executed_dependency_or_plan_blocked",
+                    detail=str(result.get("reason") or result.get("status") or ""),
+                )
+                continue
+            verified = bool(item.get("verified"))
+            success = bool(item.get("success"))
+            self._record_decision_outcome(
+                decision,
+                outcome=(
+                    "compound_step_verified" if success and verified
+                    else "compound_step_unverified" if success
+                    else "compound_step_failed"
+                ),
+                verified=verified,
+                prediction_error=float(item.get("prediction_error", 0.0 if verified else 1.0)),
+                undo_id=item.get("undo_id"),
+                automation_tier=(item.get("output") or {}).get("automation_tier"),
+                detail=str(item.get("error") or ""),
+            )
         outcome = "success" if result["status"] == "completed" else "failure"
         self.store.episode(
             original, ["L3", "L4", "L5", "partial_recovery"],
