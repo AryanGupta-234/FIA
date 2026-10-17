@@ -1,0 +1,178 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import time
+from typing import Any
+
+from prixon.events import EventBus, ProcessDeltaObserver, WinEventObserver
+from prixon.kill_switch import GlobalHotkey
+from prixon.schemas import AgentPlan
+from prixon.store import AgentStore
+
+logger = logging.getLogger(__name__)
+
+
+def _focus_mode_enabled() -> bool:
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings",
+        )
+        value, _ = winreg.QueryValueEx(key, "NOC_GLOBAL_SETTING_TOASTS_ENABLED")
+        return int(value) == 0
+    except OSError:
+        return False
+
+
+def _fullscreen_active(hwnd: int | None) -> bool:
+    if os.name != "nt" or not hwnd:
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    rect = wintypes.RECT()
+    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    monitor = user32.MonitorFromWindow(hwnd, 2)
+    info = wintypes.MONITORINFO()
+    info.cbSize = ctypes.sizeof(info)
+    if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+        return False
+    area = info.rcMonitor
+    return (
+        abs(rect.left - area.left) <= 2 and abs(rect.top - area.top) <= 2
+        and abs(rect.right - area.right) <= 2 and abs(rect.bottom - area.bottom) <= 2
+    )
+
+
+class AgentLoop:
+    """Persistent bounded goal/event loop; proactive events remain suggestion-only."""
+
+    def __init__(self, runtime) -> None:
+        self.runtime = runtime
+        self.store: AgentStore = runtime.store
+        self.bus = EventBus()
+        self.process_observer = ProcessDeltaObserver(
+            self.bus, interval_seconds=max(2.0, runtime.settings.agent_loop_poll_seconds),
+        )
+        self.window_observer = WinEventObserver(self.bus)
+        self.hotkey = GlobalHotkey(runtime.kill_switch)
+        self._task: asyncio.Task | None = None
+        self._running = False
+        self._last_battery_check = 0.0
+        self._last_battery_low = False
+        self._suggestions: list[dict[str, Any]] = []
+
+    @property
+    def running(self) -> bool:
+        return self._running and bool(self._task and not self._task.done())
+
+    def suggestions(self) -> list[dict[str, Any]]:
+        return list(self._suggestions)
+
+    async def start(self) -> dict[str, Any]:
+        if self.running:
+            return {"status": "already_running"}
+        self.runtime.kill_switch.reset()
+        self._running = True
+        await self.process_observer.start()
+        self.window_observer.start()
+        hotkey_registered = self.hotkey.start()
+        self._task = asyncio.create_task(self._run(), name="PrixonAgentLoop")
+        self.store.audit("agent_loop_started", {"global_hotkey_registered": hotkey_registered})
+        return {
+            "status": "started",
+            "global_hotkey": "Ctrl+Alt+Pause" if hotkey_registered else "unavailable",
+        }
+
+    async def stop(self, reason: str = "owner_requested") -> dict[str, Any]:
+        self._running = False
+        if self._task and self._task is not asyncio.current_task():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        self._task = None
+        await self.process_observer.stop()
+        self.window_observer.stop()
+        self.hotkey.stop()
+        self.store.audit("agent_loop_stopped", {"reason": reason})
+        return {"status": "stopped", "reason": reason}
+
+    async def _run(self) -> None:
+        while self._running:
+            if self.runtime.kill_switch.active:
+                await self.stop(self.runtime.kill_switch.reason)
+                return
+            now = time.time()
+            if now - self._last_battery_check >= 60:
+                self._check_battery()
+                self._last_battery_check = now
+            for event in self.bus.drain(100):
+                self.store.enqueue_event(event.event_type, event.payload)
+                focus = _focus_mode_enabled()
+                foreground = self.runtime.perception.snapshot().get("foreground_window")
+                fullscreen = _fullscreen_active(
+                    int(foreground["handle"]) if foreground and foreground.get("handle") else None
+                )
+                suggestion = self.runtime.proactive.evaluate(
+                    event.event_type, event.payload,
+                    focus_mode=focus, fullscreen=fullscreen,
+                )
+                if suggestion:
+                    item = {
+                        "trigger": suggestion.trigger, "title": suggestion.title,
+                        "message": suggestion.message, "created_at": suggestion.created_at,
+                        "score": suggestion.score,
+                    }
+                    self._suggestions.append(item)
+                    self._suggestions = self._suggestions[-50:]
+            await self._continue_explicit_goals()
+            await asyncio.sleep(max(0.5, self.runtime.settings.agent_loop_poll_seconds))
+
+    def _check_battery(self) -> None:
+        try:
+            battery = self.runtime.perception.snapshot().get("battery")
+            if not battery:
+                return
+            low = float(battery["percent"]) <= 20 and not battery["plugged_in"]
+            if low and not self._last_battery_low:
+                self.bus.publish("battery_low", {"percent": battery["percent"]})
+            self._last_battery_low = low
+        except Exception:
+            logger.exception("Battery event check failed")
+
+    async def _continue_explicit_goals(self) -> None:
+        for goal in self.store.goals(("pending",)):
+            payload = goal.get("payload") or {}
+            raw_plan = payload.get("plan")
+            if not raw_plan:
+                continue
+            try:
+                plan = AgentPlan.model_validate(raw_plan)
+                self.store.set_goal_status(goal["id"], "active")
+                result = await asyncio.to_thread(
+                    self.runtime.executor.execute_plan, plan, confirmed=False,
+                )
+                status = "completed" if result.get("status") == "completed" else "blocked"
+                self.store.set_goal_status(goal["id"], status)
+                self.store.episode(
+                    goal["description"], ["goal_stack", "executor", "verifier"],
+                    plan.model_dump(mode="json"), "success" if status == "completed" else "failure",
+                    result.get("reason"),
+                )
+                self.store.audit("goal_execution_finished", {
+                    "goal_id": goal["id"], "status": status, "result": result,
+                })
+            except Exception as exc:
+                self.store.set_goal_status(goal["id"], "blocked")
+                self.store.audit("goal_execution_error", {
+                    "goal_id": goal["id"], "error": f"{type(exc).__name__}:{exc}",
+                })
