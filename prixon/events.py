@@ -161,6 +161,12 @@ class WinEventObserver:
         def callback(_hook, event, hwnd, object_id, child_id, _thread, _ms):
             if not hwnd:
                 return
+            # Only index top-level windows, not child UIA controls.
+            if (
+                event in {self.EVENT_OBJECT_CREATE, self.EVENT_OBJECT_DESTROY}
+                and (int(object_id) != 0 or int(child_id) != 0)
+            ):
+                return
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             event_name = {
