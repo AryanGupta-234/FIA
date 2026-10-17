@@ -29,6 +29,18 @@ logger = logging.getLogger(__name__)
 class AgentRuntime:
     """Coordinates deterministic reflex routing and bounded deliberate planning."""
 
+    QUERY_RESPONSES = {
+        "system.status": "System status is available.",
+        "system.battery": "Battery status is available.",
+        "system.memory": "Memory usage is available.",
+        "system.cpu": "Processor usage is available.",
+        "system.wifi": "Wi-Fi adapter status is available.",
+        "system.network": "Network adapter status is available.",
+        "system.audio": "Master audio level is available.",
+        "process.list": "Running processes are listed.",
+        "app.is_running": "Application running state is available.",
+    }
+
     SETTING_TERMS = {
         "display": ("display", "screen"),
         "sound": ("sound", "audio"),
@@ -538,9 +550,11 @@ class AgentRuntime:
         )
         if result.success and self.semantic is not None:
             self.semantic.add_example(action_name, text)
+        response_text = self.format_observation(action_name, result.output) if result.success else None
         return {
             "status": "completed" if result.success else "failed",
-            "action": action_name, "output": result.output, "error": result.error,
+            "action": action_name, "answer": response_text,
+            "output": result.output, "error": result.error,
             "verified": result.verified, "undo_id": result.undo_id,
             "confidence": confidence, "plan": plan.model_dump(mode="json"),
         }
@@ -649,6 +663,55 @@ class AgentRuntime:
         outcome = "success" if result["status"] == "completed" else "failure"
         self.store.episode(original, ["L3", "L4", "L5"], plan.model_dump(mode="json"), outcome, result.get("reason"))
         return {"status": result["status"], "execution": result, "plan": plan.model_dump(mode="json")}
+
+    @staticmethod
+    def format_observation(action_name: str, output: dict[str, Any]) -> str:
+        if action_name == "system.status":
+            memory = output.get("memory", {})
+            battery = output.get("battery")
+            battery_text = (
+                f" Battery is {battery.get('percent')}%."
+                if isinstance(battery, dict) else ""
+            )
+            return (
+                f"CPU is at {output.get('cpu_percent', 'unknown')}%; "
+                f"memory is at {memory.get('percent', 'unknown')}%.{battery_text}"
+            )
+        if action_name == "system.memory":
+            return (
+                f"RAM usage is {output.get('percent', 'unknown')}%. "
+                f"{int(output.get('available_bytes', 0)) // (1024**3)} GB is available."
+            )
+        if action_name == "system.cpu":
+            return (
+                f"CPU usage is {output.get('cpu_percent', 'unknown')}% across "
+                f"{output.get('logical_cores', 'unknown')} logical cores."
+            )
+        if action_name == "system.wifi":
+            state = "connected" if output.get("connected") else "not connected"
+            return f"Wi-Fi is {state}. Adapters: {len(output.get('adapters', []))}."
+        if action_name == "system.audio":
+            return f"Master volume is {output.get('volume', 'unknown')}%."
+        if action_name == "system.battery":
+            battery = output.get("battery")
+            if not battery:
+                return "No battery telemetry is available on this device."
+            power = "plugged in" if battery.get("plugged_in") else "on battery"
+            return f"Battery is at {battery.get('percent')}% ({power})."
+        if action_name == "app.is_running":
+            return (
+                f"{output.get('application')} is "
+                f"{'running' if output.get('running') else 'not running'}."
+            )
+        if action_name == "process.list":
+            count = len(output.get("processes", []))
+            return f"I found {count} running processes."
+        if action_name == "system.network":
+            return (
+                f"Network traffic counters: {output.get('bytes_received', 0)} bytes received, "
+                f"{output.get('bytes_sent', 0)} bytes sent."
+            )
+        return "The requested observation completed."
 
     def create_goal(self, description: str, priority: int, plan: AgentPlan | None) -> str:
         payload = {"plan": plan.model_dump(mode="json")} if plan else {}
