@@ -93,6 +93,7 @@ class AgentStore:
                     action_name TEXT NOT NULL,
                     args_json TEXT NOT NULL,
                     before_state_json TEXT NOT NULL,
+                    output_json TEXT NOT NULL DEFAULT '{}',
                     status TEXT NOT NULL DEFAULT 'pending',
                     created_at REAL NOT NULL,
                     completed_at REAL
@@ -217,6 +218,13 @@ class AgentStore:
             )
         return undo_id
 
+    def update_undo_output(self, undo_id: str, output: dict[str, Any]) -> None:
+        with self.connect() as db:
+            db.execute(
+                "UPDATE undo_journal SET output_json=? WHERE id=?",
+                (json.dumps(output, default=str), undo_id),
+            )
+
     def finish_undo(self, undo_id: str, status: str) -> None:
         if status not in {"undone", "failed", "retained"}:
             raise ValueError("Unsupported undo status")
@@ -339,6 +347,7 @@ class AgentStore:
                 "id": row["id"], "action_name": row["action_name"],
                 "args": json.loads(row["args_json"]),
                 "before_state": json.loads(row["before_state_json"]),
+                "output": json.loads(row["output_json"]) if "output_json" in row.keys() else {},
                 "status": row["status"],
             }
 
@@ -400,6 +409,16 @@ class AgentStore:
                 {"id": row["id"], "utterance": row["utterance"],
                  "plan": json.loads(row["plan_json"]),
                  "layer_path": json.loads(row["layer_path_json"])}
+                for row in rows
+            ]
+
+    def aliases(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM aliases ORDER BY last_used DESC").fetchall()
+            return [
+                {"phrase": row["phrase"], "target_type": row["target_type"],
+                 "target": row["target"], "scope": json.loads(row["scope_json"]),
+                 "confidence": row["confidence"], "explicit": bool(row["explicit"])}
                 for row in rows
             ]
 
