@@ -149,6 +149,14 @@ class DecisionFeedbackRequest(BaseModel):
     confirmed: bool = False
 
 
+class CalibrationApplyRequest(BaseModel):
+    confirmed: bool = False
+    frozen_regression_passed: bool = False
+    frozen_accuracy_before: float = Field(ge=0.0, le=1.0)
+    frozen_accuracy_after: float = Field(ge=0.0, le=1.0)
+    wrong_execution_rate_after: float = Field(ge=0.0, le=1.0)
+
+
 class EntityAliasRequest(BaseModel):
     phrase: str = Field(min_length=2, max_length=100)
     entity_type: str

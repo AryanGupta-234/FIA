@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from prixon.agent_loop import AgentLoop
+from prixon.calibration import build_calibration_proposal
 from prixon.governance import decide
 from prixon.planner import validate_plan
 from prixon.runtime import AgentRuntime
@@ -17,6 +18,7 @@ from prixon.schemas import (
     AliasFeedbackRequest,
     DecisionRequest,
     DecisionFeedbackRequest,
+    CalibrationApplyRequest,
     DeleteAliasRequest,
     EntityAliasRequest,
     GoalCreateRequest,
@@ -565,6 +567,77 @@ def governance_check(payload: dict[str, Any]) -> dict[str, Any]:
         "requires_confirmation": outcome.requires_confirmation,
         "autonomy_level": outcome.autonomy_level,
         "reason": outcome.reason,
+    }
+
+
+@router.post("/calibration/propose")
+def propose_confidence_calibration(
+    max_wrong_execution_rate: float = Query(0.02, ge=0.0, lt=1.0),
+) -> dict[str, Any]:
+    current_weights = runtime.store.get_setting(
+        "confidence.active_weights", runtime._active_confidence_weights(),
+    )
+    proposal = build_calibration_proposal(
+        runtime.store.owner_labeled_decisions(limit=20000),
+        current_weights=current_weights,
+        max_wrong_execution_rate=max_wrong_execution_rate,
+    )
+    runtime.store.set_setting("confidence.calibration.latest", proposal)
+    runtime.store.audit("confidence_calibration_proposed", {
+        "proposal_id": proposal["proposal_id"],
+        "owner_reviewed_samples": proposal["owner_reviewed_samples"],
+        "max_wrong_execution_rate": max_wrong_execution_rate,
+    })
+    return proposal
+
+
+@router.get("/calibration/proposal")
+def get_confidence_calibration_proposal() -> dict[str, Any]:
+    return runtime.store.get_setting("confidence.calibration.latest", {
+        "status": "not_proposed",
+        "message": "Review at least 20 owner-labeled decisions before proposing calibration.",
+    })
+
+
+@router.post("/calibration/apply")
+def apply_confidence_calibration(payload: CalibrationApplyRequest) -> dict[str, Any]:
+    if not payload.confirmed or not payload.frozen_regression_passed:
+        raise HTTPException(
+            409,
+            "Owner confirmation and a passing frozen-regression comparison are required.",
+        )
+    if payload.frozen_accuracy_after < payload.frozen_accuracy_before:
+        raise HTTPException(409, "Frozen-set accuracy regressed; calibration cannot be activated.")
+    proposal = runtime.store.get_setting("confidence.calibration.latest")
+    if not isinstance(proposal, dict) or proposal.get("status") != "ready_for_owner_review":
+        raise HTTPException(409, "No complete calibration proposal is available.")
+    target = float(proposal.get("max_wrong_execution_rate", 0.02))
+    if payload.wrong_execution_rate_after > target:
+        raise HTTPException(409, "The proposed policy exceeds its wrong-execution target.")
+    thresholds = {
+        tier: float(item["threshold"])
+        for tier, item in proposal.get("risk_thresholds", {}).items()
+        if isinstance(item, dict) and "threshold" in item
+    }
+    weights = proposal.get("weights")
+    if not isinstance(weights, dict) or set(weights) != set(runtime._active_confidence_weights()):
+        raise HTTPException(409, "The calibration weight proposal is incomplete.")
+    runtime.store.set_setting("confidence.active_weights", weights)
+    runtime.store.set_setting("confidence.active_thresholds", thresholds)
+    runtime.store.audit("confidence_calibration_activated", {
+        "proposal_id": proposal["proposal_id"],
+        "weights": weights,
+        "thresholds": thresholds,
+        "frozen_accuracy_before": payload.frozen_accuracy_before,
+        "frozen_accuracy_after": payload.frozen_accuracy_after,
+        "wrong_execution_rate_after": payload.wrong_execution_rate_after,
+        "owner_confirmed": True,
+    })
+    return {
+        "status": "activated",
+        "proposal_id": proposal["proposal_id"],
+        "weights": weights,
+        "thresholds": thresholds,
     }
 
 
