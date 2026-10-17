@@ -13,7 +13,19 @@ class WindowsPerception:
     """Compact, privacy-bounded machine observations.
 
     Does not read page text, URLs, cookies, passwords, form values or credential dialogs.
+    Sensitive foreground window titles are discarded before entering the world model.
     """
+
+    SENSITIVE_TITLE_TERMS = (
+        "password", "credential", "sign in", "sign-in", "log in", "login",
+        "windows security", "security key", "authentication", "authenticator",
+        "two-factor", "2fa", "pin entry",
+    )
+
+    @classmethod
+    def _is_sensitive_title(cls, title: str) -> bool:
+        value = title.casefold()
+        return any(term in value for term in cls.SENSITIVE_TITLE_TERMS)
 
     @staticmethod
     def _foreground_window() -> dict[str, Any] | None:
@@ -31,7 +43,14 @@ class WindowsPerception:
         user32.GetWindowTextW(hwnd, buffer, len(buffer))
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        return {"handle": int(hwnd), "title": buffer.value[:500], "pid": int(pid.value)}
+        title = buffer.value[:500]
+        sensitive = WindowsPerception._is_sensitive_title(title)
+        return {
+            "handle": int(hwnd),
+            "title": None if sensitive else title,
+            "pid": int(pid.value),
+            "sensitive": sensitive,
+        }
 
     @staticmethod
     def _installed_apps() -> list[dict[str, str]]:
