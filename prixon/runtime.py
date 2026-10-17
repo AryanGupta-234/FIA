@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from datetime import datetime
 from typing import Any
 
 from prixon.confidence import DecisionSignals, fuse_confidence, meets_risk_threshold
@@ -77,8 +78,11 @@ class AgentRuntime:
             self.registry, self.store, self.perception, self.kill_switch,
             budget=ExecutionBudget(
                 max_steps=self.settings.agent_max_plan_steps,
+                max_replans=self.settings.agent_max_replans,
                 wall_clock_seconds=self.settings.agent_wall_clock_seconds,
+                max_model_tokens=self.settings.agent_max_model_tokens,
                 step_timeout_seconds=self.settings.agent_step_timeout_seconds,
+                max_actions_per_minute=self.settings.agent_max_actions_per_minute,
             ),
         )
         self.proactive = ProactiveEngine(self.store)
@@ -252,6 +256,11 @@ class AgentRuntime:
                 "battery": snapshot["battery"],
             },
             "active_goals": self.store.goals(),
+            "owner_context": {
+                "local_time": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "weekday": datetime.now().astimezone().strftime("%A"),
+                "hour": datetime.now().astimezone().hour,
+            },
         }
 
     @staticmethod
@@ -553,6 +562,7 @@ class AgentRuntime:
         validation = validate_plan(plan, self.registry, self.settings.agent_max_plan_steps)
         self.store.audit("plan_validated", {
             "goal": text, "valid": validation.valid, "errors": validation.errors,
+            "confidence": preview.get("confidence", 0.0), "risk": action.risk.value,
         })
         if not validation.valid:
             return {"status": "rejected", "reason": "plan_validation_failed", "errors": validation.errors}
