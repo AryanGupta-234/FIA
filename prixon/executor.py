@@ -103,8 +103,21 @@ class WindowsActionAdapters:
             self._require_windows()
             target = str(args.get("application_target", ""))
             self._validate_launch_target(target)
+            before_pids = set(psutil.pids())
             os.startfile(target)  # type: ignore[attr-defined]
-            return {"launched": target, "application": args.get("application")}
+            time.sleep(0.5)
+            new_pids = sorted(set(psutil.pids()) - before_pids)
+            selected_pid = None
+            app_name = str(args.get("application") or "").casefold()
+            for pid in new_pids:
+                try:
+                    name = psutil.Process(pid).name().casefold()
+                    if app_name and app_name.split()[0] in name:
+                        selected_pid = pid
+                        break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+            return {"launched": target, "application": args.get("application"), "pid": selected_pid}
         if action in {"window.minimize", "window.restore"}:
             self._require_windows()
             hwnd = self._window_handle(args)
@@ -159,9 +172,12 @@ class WindowsActionAdapters:
     def _validated_user_file(value: Any) -> Path:
         if not value:
             raise ValueError("A file path must be supplied explicitly.")
-        path = Path(str(value)).expanduser().resolve(strict=True)
+        raw_path = Path(str(value)).expanduser()
+        if raw_path.is_symlink():
+            raise ValueError("Symbolic links cannot be moved to quarantine.")
+        path = raw_path.resolve(strict=True)
         home = Path.home().resolve()
-        if path.is_symlink() or not path.is_file() or (path != home and home not in path.parents):
+        if not path.is_file() or (path != home and home not in path.parents):
             raise ValueError("Only an existing regular file inside the user profile can be quarantined.")
         return path
 
@@ -254,7 +270,10 @@ class ActionExecutor:
         if action.risk != RiskTier.READ_ONLY and not action.undo_supported and action.risk != RiskTier.ALWAYS_CONFIRM:
             return ActionResult(False, action_name, error="state_change_without_undo_recipe_blocked")
 
-        before = self.adapters.capture_before(action_name, args)
+        try:
+            before = self.adapters.capture_before(action_name, args)
+        except Exception as exc:
+            return ActionResult(False, action_name, error=f"precondition_failed:{type(exc).__name__}:{exc}")
         undo_id = None
         if action.risk != RiskTier.READ_ONLY:
             undo_id = self.store.record_undo(action_name, args, before)
@@ -263,14 +282,26 @@ class ActionExecutor:
             output = future.result(timeout=self.budget.step_timeout_seconds)
         except TimeoutError:
             self.store.audit("action_timeout", {"action": action_name, "args": args})
+            if undo_id:
+                self.store.finish_undo(undo_id, "failed")
             return ActionResult(False, action_name, error="action_timeout", undo_id=undo_id)
         except Exception as exc:
             self.store.audit("action_failed", {"action": action_name, "error": str(exc)})
+            if undo_id:
+                self.store.finish_undo(undo_id, "failed")
             return ActionResult(False, action_name, error=f"{type(exc).__name__}:{exc}", undo_id=undo_id)
 
         verified = self.verify(action_name, args, output)
+        if undo_id:
+            self.store.update_undo_output(undo_id, output)
         if not verified:
             self.store.audit("verification_failed", {"action": action_name, "output": output})
+            if undo_id:
+                try:
+                    rolled_back = self.adapters.undo(action_name, args, before, output)
+                except Exception:
+                    rolled_back = False
+                self.store.finish_undo(undo_id, "undone" if rolled_back else "failed")
             return ActionResult(False, action_name, output, "postcondition_failed", undo_id, False)
         self.store.audit("action_completed", {
             "action": action_name, "args": args, "output": output, "undo_id": undo_id,
@@ -296,6 +327,7 @@ class ActionExecutor:
 
     def execute_plan(self, plan: AgentPlan, *, confirmed: bool = False) -> dict[str, Any]:
         started = time.monotonic()
+        self._seen_steps.clear()
         if len(plan.steps) > self.budget.max_steps:
             return {"status": "rejected", "reason": "step_budget_exceeded", "steps": []}
         results: list[dict[str, Any]] = []
@@ -311,6 +343,14 @@ class ActionExecutor:
             if self._seen_steps[signature] > 2:
                 return {"status": "aborted", "reason": "loop_detected", "steps": results}
             action_result = self.execute_action(step.tool, step.args, confirmed=confirmed)
+            if not action_result.success:
+                action = self.registry.get(step.tool)
+                retryable = action is not None and (
+                    action.risk == RiskTier.READ_ONLY or step.tool in {"volume.set", "window.minimize", "window.restore"}
+                )
+                if retryable:
+                    time.sleep(0.25)
+                    action_result = self.execute_action(step.tool, step.args, confirmed=confirmed)
             item = {
                 "index": index, "action": action_result.action,
                 "success": action_result.success, "verified": action_result.verified,
