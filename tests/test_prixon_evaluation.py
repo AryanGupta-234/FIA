@@ -17,6 +17,17 @@ def test_frozen_dataset_has_several_hundred_diverse_examples():
     assert report["per_case_type"]["ambiguous"]["accuracy"] >= 0.80
 
 
+def test_evaluation_reports_wrong_selection_separately_from_abstention():
+    rows = [
+        {"text": "show system health", "expected_action": "system.status"},
+        {"text": "open", "expected_status": "clarify"},
+    ]
+    report = evaluate_rows(rows)
+    assert report["selected_action_count"] == 1
+    assert report["wrong_selected_action_count"] == 0
+    assert report["wrong_selection_rate_when_selected"] == 0.0
+
+
 def test_evaluation_reports_routing_class_and_clarification_metrics():
     rows = [
         {"text": "show system health", "expected_action": "system.status", "case_type": "clean"},

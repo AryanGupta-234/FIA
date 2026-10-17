@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
+from collections import deque
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -35,6 +37,32 @@ class OllamaClient:
         self.keep_alive = keep_alive
         self.max_prompt_chars = 6000
         self.last_metrics: dict[str, Any] = {}
+        self.call_count = 0
+        self.metrics_history: deque[dict[str, Any]] = deque(maxlen=2000)
+
+    def metrics_summary(self) -> dict[str, Any]:
+        calls = list(self.metrics_history)
+        latency = sorted(
+            float(item["latency_ms"]) for item in calls
+            if item.get("latency_ms") is not None
+        )
+
+        def percentile(values: list[float], quantile: float) -> float | None:
+            if not values:
+                return None
+            index = max(0, math.ceil(quantile * len(values)) - 1)
+            return round(values[index], 2)
+
+        return {
+            "total_calls": self.call_count,
+            "retained_samples": len(calls),
+            "latency_p50_ms": percentile(latency, 0.50),
+            "latency_p95_ms": percentile(latency, 0.95),
+            "mean_latency_ms": round(sum(latency) / len(latency), 2) if latency else None,
+            "prompt_tokens_total": sum(int(item.get("prompt_eval_count") or 0) for item in calls),
+            "completion_tokens_total": sum(int(item.get("eval_count") or 0) for item in calls),
+            "history_limit": self.metrics_history.maxlen,
+        }
 
     async def health(self) -> dict[str, Any]:
         started = time.perf_counter()
@@ -101,7 +129,9 @@ class OllamaClient:
         if not isinstance(parsed, dict):
             raise ValueError("Ollama response must be a JSON object")
         duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        self.call_count += 1
         self.last_metrics = {
+            "call_index": self.call_count,
             "model": self.model,
             "endpoint": f"{self.base_url}/api/chat",
             "prompt_bytes": prompt_bytes,
@@ -113,6 +143,7 @@ class OllamaClient:
             "eval_count": data.get("eval_count"),
             "keep_alive": self.keep_alive,
         }
+        self.metrics_history.append(dict(self.last_metrics))
         logger.info("ollama_complete metrics=%s", self.last_metrics)
         return parsed
 

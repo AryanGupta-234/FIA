@@ -33,7 +33,7 @@ def evaluate_rows(
 ) -> dict[str, Any]:
     router = router or IntentRouter(ActionRegistry())
     total = correct = unresolved = clarified = frozen_total = frozen_correct = 0
-    rule_selected = 0
+    rule_selected = selected_count = wrong_selected_count = safe_abstentions = 0
     per_action: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
     per_case: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
     per_class: dict[str, dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
@@ -62,6 +62,15 @@ def evaluate_rows(
             unresolved += 1
         elif result.status == "clarify":
             clarified += 1
+        if result.selected_action:
+            selected_count += 1
+            expected_selection = (
+                result.selected_action == expected_action
+                if expected_action else expected_status == "selected"
+            )
+            wrong_selected_count += int(not expected_selection)
+        elif expected_action and result.status in {"clarify", "unresolved"}:
+            safe_abstentions += 1
         if result.reason == "rules_first_registry_match":
             rule_selected += 1
         if outcome_correct:
@@ -88,6 +97,13 @@ def evaluate_rows(
         "clarification_rate": round(clarified / total, 4) if total else 0.0,
         "unresolved_rate": round(unresolved / total, 4) if total else 0.0,
         "l1_rules_selected_share": round(rule_selected / total, 4) if total else 0.0,
+        "selected_action_count": selected_count,
+        "wrong_selected_action_count": wrong_selected_count,
+        "wrong_selection_rate_per_request": round(wrong_selected_count / total, 4) if total else 0.0,
+        "wrong_selection_rate_when_selected": (
+            round(wrong_selected_count / selected_count, 4) if selected_count else 0.0
+        ),
+        "safe_abstention_count": safe_abstentions,
         "frozen_total": frozen_total,
         "frozen_accuracy": round(frozen_correct / frozen_total, 4) if frozen_total else None,
         "per_action": rates(per_action),

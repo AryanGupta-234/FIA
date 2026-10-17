@@ -425,6 +425,8 @@ def model_metrics() -> dict[str, Any]:
         "endpoint": runtime.ollama.base_url,
         "mode": "local_only",
         "last_call": runtime.ollama.last_metrics,
+        "summary": runtime.ollama.metrics_summary(),
+        "recent_calls": list(runtime.ollama.metrics_history)[-20:],
     }
 
 
