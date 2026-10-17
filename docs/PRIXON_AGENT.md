@@ -10,7 +10,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 - L2 optional local FastEmbed/BGE retrieval and retrieval margins.
 - L3 grounding against installed applications, processes and windows.
 - Context-scoped entity aliases and corrected-intent negative memory.
-- L4 constrained local Ollama arbitration on grounded candidates.
+- L4 constrained local Ollama arbitration on grounded candidates. A separate optional planner model can be configured for compound plans; a blank planner model reuses the smaller decide model.
 - Low-confidence self-consistency; disagreement escalates.
 - L5 deterministic confidence fusion and risk-tier decision gating.
 

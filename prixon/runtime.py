@@ -80,6 +80,7 @@ class AgentRuntime:
         self.ollama = ollama or OllamaClient(
             self.settings.ollama_base_url, self.settings.ollama_model,
             self.settings.ollama_timeout_seconds, self.settings.ollama_keep_alive,
+            planner_model=self.settings.ollama_planner_model or None,
         )
         self.kill_switch = KillSwitch()
         adapters = WindowsActionAdapters(

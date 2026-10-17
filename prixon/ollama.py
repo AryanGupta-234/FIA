@@ -24,6 +24,7 @@ class OllamaClient:
         model: str = "qwen2.5:3b-instruct",
         timeout_seconds: float = 60.0,
         keep_alive: str = "10m",
+        planner_model: str | None = None,
     ) -> None:
         parsed_url = urlsplit(base_url)
         if (
@@ -35,6 +36,7 @@ class OllamaClient:
             raise ValueError("Prixon Ollama endpoint must be an unauthenticated HTTP loopback URL.")
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.planner_model = (planner_model or model).strip() or model
         self.timeout_seconds = max(1.0, timeout_seconds)
         self.keep_alive = keep_alive
         # The design target is roughly 1.5k prompt tokens for decide-sized calls.
@@ -123,6 +125,8 @@ class OllamaClient:
                 "base_url": self.base_url,
                 "configured_model": self.model,
                 "model_present": self.model in models,
+                "configured_planner_model": self.planner_model,
+                "planner_model_present": self.planner_model in models,
                 "models": models,
                 "mode": "local_only",
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
@@ -133,6 +137,8 @@ class OllamaClient:
                 "base_url": self.base_url,
                 "configured_model": self.model,
                 "model_present": False,
+                "configured_planner_model": self.planner_model,
+                "planner_model_present": False,
                 "models": [],
                 "mode": "local_only",
                 "error": type(exc).__name__,
@@ -142,6 +148,7 @@ class OllamaClient:
     async def generate_json(
         self, system: str, prompt: str, schema: dict[str, Any],
         *, max_tokens: int = 384, temperature: float = 0.0,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
         system = system[:self.max_system_prompt_chars]
         prompt_capacity = max(0, self.max_prompt_chars - len(system))
@@ -155,8 +162,11 @@ class OllamaClient:
             allocated_tokens = min(requested_tokens, remaining_tokens)
         else:
             allocated_tokens = requested_tokens
+        active_model = (model_override or self.model).strip()
+        if not active_model:
+            raise ValueError("A local Ollama model name is required.")
         payload = {
-            "model": self.model,
+            "model": active_model,
             "stream": False,
             "format": schema,
             "keep_alive": self.keep_alive,
@@ -173,7 +183,7 @@ class OllamaClient:
         prompt_bytes = len(system.encode("utf-8")) + len(prompt.encode("utf-8"))
         logger.info(
             "ollama_request model=%s endpoint=%s prompt_bytes=%d timeout=%.1fs",
-            self.model, f"{self.base_url}/api/chat", prompt_bytes, self.timeout_seconds,
+            active_model, f"{self.base_url}/api/chat", prompt_bytes, self.timeout_seconds,
         )
         self.call_count += 1
         call_index = self.call_count
@@ -213,7 +223,7 @@ class OllamaClient:
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
             self.last_metrics = {
                 "call_index": call_index,
-                "model": self.model,
+                "model": active_model,
                 "endpoint": f"{self.base_url}/api/chat",
                 "prompt_bytes": prompt_bytes,
                 "response_bytes": len(raw.encode("utf-8")) if isinstance(raw, str) else 0,
@@ -449,7 +459,10 @@ class OllamaClient:
             "goal": goal, "registered_tools": tools,
             "situation": situation, "step_budget": max_steps,
         }, ensure_ascii=False)
-        return await self.generate_json(system, prompt, schema, max_tokens=384)
+        return await self.generate_json(
+            system, prompt, schema, max_tokens=384,
+            model_override=self.planner_model,
+        )
 
 
     async def reflect_failure(
