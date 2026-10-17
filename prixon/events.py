@@ -6,8 +6,9 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import psutil
 
