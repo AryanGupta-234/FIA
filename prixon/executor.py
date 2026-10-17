@@ -96,6 +96,27 @@ class WindowsActionAdapters:
             return {"processes": self.perception.processes(limit=200)}
         if action == "system.battery":
             return {"battery": self.perception.snapshot()["battery"]}
+        if action == "system.memory":
+            memory = psutil.virtual_memory()
+            return {
+                "total_bytes": int(memory.total),
+                "available_bytes": int(memory.available),
+                "used_bytes": int(memory.used),
+                "percent": float(memory.percent),
+            }
+        if action == "system.cpu":
+            return {"cpu_percent": psutil.cpu_percent(interval=0.1), "logical_cores": psutil.cpu_count()}
+        if action == "system.wifi":
+            adapters = []
+            for name, stats in psutil.net_if_stats().items():
+                if any(token in name.casefold() for token in ("wi-fi", "wifi", "wireless", "802.11")):
+                    adapters.append({
+                        "name": name, "is_up": bool(stats.isup),
+                        "speed_mbps": int(stats.speed) if stats.speed else None,
+                    })
+            return {"adapters": adapters, "connected": any(item["is_up"] for item in adapters)}
+        if action == "system.audio":
+            return {"volume": self._get_volume()}
         if action == "app.is_running":
             mention = str(args.get("application") or "").casefold().strip()
             if not mention:
@@ -403,7 +424,10 @@ class ActionExecutor:
         return ActionResult(True, action_name, output, undo_id=undo_id, verified=True)
 
     def verify(self, action_name: str, args: dict[str, Any], output: dict[str, Any]) -> bool:
-        if action_name in {"system.status", "process.list", "system.battery", "system.network"}:
+        if action_name in {
+            "system.status", "process.list", "system.battery", "system.network",
+            "system.memory", "system.cpu", "system.wifi", "system.audio",
+        }:
             return bool(output)
         if action_name == "app.is_running":
             return "running" in output
