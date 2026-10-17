@@ -242,6 +242,11 @@ class AgentRuntime:
             for item in open_windows
             if item.get("handle") and not item.get("sensitive")
         ]
+        live_window_targets = {str(item["handle"]) for item in safe_windows}
+        for existing_window in self.store.entity_rows("window"):
+            if existing_window["target"] not in live_window_targets:
+                self.index.remove_target("window", existing_window["target"])
+                self.references.forget(existing_window["target"])
         window_count = self.index.refresh("window", safe_windows)
         if foreground and foreground.get("title") and not foreground.get("sensitive"):
             self.references.remember({
