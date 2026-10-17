@@ -45,7 +45,7 @@ class OwnerLexicon:
     def correct(self, phrase: str, wrong_action: str, corrected_action: str) -> LearningResult:
         self.store.add_negative_example(phrase, wrong_action)
         self.store.put_alias(
-            phrase, "action", corrected_action, confidence=0.9, explicit=False,
+            phrase, "action", corrected_action, confidence=0.9, explicit=True,
         )
         self.store.audit("owner_corrected_action", {
             "phrase": phrase, "wrong_action": wrong_action,
