@@ -130,6 +130,7 @@ class EntityAliasRequest(BaseModel):
     phrase: str = Field(min_length=2, max_length=100)
     entity_type: str
     target: str = Field(min_length=1, max_length=500)
+    scope: dict[str, Any] = Field(default_factory=dict)
     confirmed: bool = False
 
 
