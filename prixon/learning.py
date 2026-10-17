@@ -29,11 +29,14 @@ class OwnerLexicon:
         self.store.audit("alias_explicitly_taught", {"phrase": phrase, "target": action_name})
         return LearningResult("promoted", phrase, action_name, 1.0, 1)
 
-    def teach_entity(self, phrase: str, entity_type: str, target: str) -> None:
+    def teach_entity(
+        self, phrase: str, entity_type: str, target: str,
+        scope: dict | None = None,
+    ) -> None:
         if entity_type not in {"application", "window", "folder", "file", "setting"}:
             raise ValueError("Unsupported entity alias type")
         self.store.put_alias(
-            phrase, entity_type, target, confidence=1.0, explicit=True,
+            phrase, entity_type, target, scope=scope, confidence=1.0, explicit=True,
         )
         self.store.audit("entity_alias_explicitly_taught", {
             "phrase": phrase, "entity_type": entity_type, "target": target,
