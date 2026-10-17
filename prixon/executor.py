@@ -374,6 +374,7 @@ class ActionExecutor:
     def execute_action(
         self, action_name: str, args: dict[str, Any], *,
         confirmed: bool = False, confidence: float = 1.0,
+        utterance: str = "", session_id: str = "local-session",
     ) -> ActionResult:
         action = self.registry.get(action_name)
         if action is None:
@@ -411,7 +412,9 @@ class ActionExecutor:
             return ActionResult(False, action_name, error=f"precondition_failed:{type(exc).__name__}:{exc}")
         undo_id = None
         if action.undo_supported:
-            undo_id = self.store.record_undo(action_name, args, before)
+            undo_id = self.store.record_undo(
+                action_name, args, before, utterance=utterance, session_id=session_id,
+            )
         future = self._executor.submit(self.adapters.execute, action_name, args)
         try:
             output = future.result(timeout=self.budget.step_timeout_seconds)
@@ -475,7 +478,10 @@ class ActionExecutor:
             return Path(output.get("quarantined_path", "")).is_file()
         return False
 
-    def execute_plan(self, plan: AgentPlan, *, confirmed: bool = False) -> dict[str, Any]:
+    def execute_plan(
+        self, plan: AgentPlan, *, confirmed: bool = False,
+        session_id: str = "local-session",
+    ) -> dict[str, Any]:
         started = time.monotonic()
         self._seen_steps.clear()
         from prixon.planner import validate_plan
@@ -503,6 +509,7 @@ class ActionExecutor:
                 return {"status": "blocked", "reason": str(exc), "steps": results}
             action_result = self.execute_action(
                 step.tool, resolved_args, confirmed=confirmed, confidence=step.confidence,
+                utterance=plan.goal, session_id=session_id,
             )
             if not action_result.success:
                 action = self.registry.get(step.tool)
@@ -514,6 +521,7 @@ class ActionExecutor:
                     time.sleep(0.25)
                     action_result = self.execute_action(
                         step.tool, resolved_args, confirmed=confirmed, confidence=step.confidence,
+                        utterance=plan.goal, session_id=session_id,
                     )
             item = {
                 "index": index, "action": action_result.action,
