@@ -117,6 +117,7 @@ class AliasFeedbackRequest(BaseModel):
     phrase: str = Field(min_length=2, max_length=100)
     action_name: str = Field(min_length=2, max_length=100)
     success: bool
+    corrected_action: str | None = Field(default=None, min_length=2, max_length=100)
     session_id: str = "local-session"
 
 
