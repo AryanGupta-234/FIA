@@ -155,7 +155,7 @@ class AgentRuntime:
             return {"status": "not_found_or_not_approved"}
         raw_plan = macro["plan"]
         steps = []
-        for index, raw_step in enumerate(raw_plan.get("steps", [])):
+        for raw_step in raw_plan.get("steps", []):
             step_args = dict(raw_step.get("args") or {})
             for key, value in list(step_args.items()):
                 if isinstance(value, str) and value.startswith("$input."):
@@ -652,7 +652,6 @@ class AgentRuntime:
                 }
             grounded = sum(1 for slot in action.required_slots if step.args.get(slot) not in (None, ""))
             slot_score = grounded / len(action.required_slots) if action.required_slots else 1.0
-            scores = [candidate.score for candidate in route.candidates]
             chosen_score = next(
                 (candidate.score for candidate in route.candidates if candidate.action.name == step.tool),
                 0.0,
