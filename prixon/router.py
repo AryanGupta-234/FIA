@@ -19,8 +19,23 @@ def classify(text: str) -> IntentClass:
     )):
         return IntentClass.FILE_OPERATION
     if any(term in value for term in (
-        "volume", "brightness", "wifi", "wi-fi", "bluetooth", "settings",
-        "setting", "night light", "focus assist",
+        "open wifi settings", "open wi-fi settings", "open battery settings",
+        "open bluetooth settings", "open sound settings", "open display settings",
+        "open night light settings", "open focus assist settings",
+    )) or re.search(r"\\b(set|change|adjust)\\s+(?:the\\s+)?(?:volume|brightness|wifi|wi-fi)\\b", value):
+        return IntentClass.SYSTEM_SETTING
+    if any(term in value for term in (
+        "wifi", "wi-fi", "wireless", "battery", "volume", "master audio",
+        "ram", "memory", "cpu", "processor", "network", "internet",
+    )):
+        if any(term in value for term in (
+            "status", "usage", "percentage", "percent", "connected", "connection",
+            "running", "free", "available", "how much", "check", "show", "what is",
+            "what's", "remaining", "left",
+        )) or value.startswith("is "):
+            return IntentClass.QUERY
+    if any(term in value for term in (
+        "brightness", "settings", "setting", "night light", "focus assist", "bluetooth",
     )):
         return IntentClass.SYSTEM_SETTING
     if re.search(r"\b(open|launch|start|fire up)\b", value):
