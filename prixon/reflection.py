@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 FAILURE_CAUSES = (
     "wrong_target",
     "app_not_ready",

@@ -17,7 +17,6 @@ from prixon.perception import WindowsPerception
 from prixon.registry import ActionRegistry
 from prixon.schemas import AgentPlan, RiskTier
 from prixon.store import AgentStore
-from prixon.verifier import compare_expected
 
 
 @dataclass

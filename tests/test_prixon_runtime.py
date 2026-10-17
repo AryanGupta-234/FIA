@@ -498,8 +498,6 @@ def test_implicit_learning_waits_for_owner_approval(tmp_path):
 
 
 def test_entity_alias_to_deleted_file_is_rejected(tmp_path):
-    from pathlib import Path
-
     store = AgentStore(tmp_path / "stale-alias.sqlite3")
     missing = tmp_path / "vanished.txt"
     store.put_alias("old report", "file", str(missing), explicit=True)

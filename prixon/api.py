@@ -22,9 +22,9 @@ from prixon.schemas import (
     MacroRunRequest,
     ProactiveFeedbackRequest,
     ResetLearningRequest,
+    RiskTier,
     RoutineCreateRequest,
     RoutineStatusRequest,
-    RiskTier,
     RunRequest,
     TeachAliasRequest,
 )
