@@ -149,7 +149,10 @@ class IntentRouter:
         if "application" in slots:
             return bool(
                 re.search(r"\b(open|launch|start|fire up)\s+\w+", text)
-                or re.search(r"\b(?:is|check if|whether)\s+\w+\s+(?:running|open|active)", text)
+                or re.search(
+                    r"\b(?:is|check if|whether)\s+([\w.-]+(?:\s+[\w.-]+){0,3})\s+(?:is\s+)?(?:running|open|active)\b",
+                    text,
+                )
             )
         if "level" in slots:
             return bool(re.search(r"\b\d{1,3}\s*%?\b", text))
