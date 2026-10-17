@@ -380,7 +380,7 @@ class AgentStore:
             successes = int(row["successes"]) if row else 0
             if trigger and trigger not in phrases:
                 phrases.append(trigger)
-            successes += max(1, evidence_count)
+            successes += max(0, evidence_count)
             db.execute(
                 """INSERT INTO macros(shape_hash,name,plan_json,trigger_phrases_json,successes,approved,updated_at)
                    VALUES(?,?,?,?,?,?,?)
