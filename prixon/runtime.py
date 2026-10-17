@@ -921,13 +921,25 @@ class AgentRuntime:
                 reverse=True,
             )
             margin = max(0.0, chosen_score - (remaining[0] if remaining else 0.0))
-            step.confidence = fuse_confidence(DecisionSignals(
-                retrieval_margin=margin,
-                slot_grounding=slot_score,
-                llm_confidence=float(step.confidence),
-                context_prior=1.0 if situation.get("foreground_app") else 0.5,
-                user_lexicon_hit=0.0,
-            ))
+            signal_values = {
+                "retrieval_margin": margin,
+                "slot_grounding": slot_score,
+                "llm_confidence": float(step.confidence),
+                "context_prior": 1.0 if situation.get("foreground_app") else 0.5,
+                "user_lexicon_hit": 0.0,
+            }
+            step.confidence = fuse_confidence(DecisionSignals(**signal_values))
+            self._record_decision(
+                utterance=clauses[index],
+                status="selected",
+                intent_class=route.intent_class.value if route.intent_class else None,
+                action=action.name,
+                confidence=step.confidence,
+                risk=action.risk.value,
+                reason="compound_plan_grounded_step",
+                confidence_signals=signal_values,
+                candidate_actions=[candidate.action.name for candidate in route.candidates],
+            )
             if action.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(
                 step.confidence, action.risk.value,
             ):
@@ -1115,13 +1127,25 @@ class AgentRuntime:
             / len(alternative.required_slots)
             if alternative.required_slots else 1.0
         )
-        confidence = fuse_confidence(DecisionSignals(
-            retrieval_margin=max(0.0, selected_score - runner_up),
-            slot_grounding=slot_score,
-            llm_confidence=0.0,
-            context_prior=0.5,
-            user_lexicon_hit=0.0,
-        ))
+        signal_values = {
+            "retrieval_margin": max(0.0, selected_score - runner_up),
+            "slot_grounding": slot_score,
+            "llm_confidence": 0.0,
+            "context_prior": 0.5,
+            "user_lexicon_hit": 0.0,
+        }
+        confidence = fuse_confidence(DecisionSignals(**signal_values))
+        self._record_decision(
+            utterance=text,
+            status="selected",
+            intent_class=route.intent_class.value if route.intent_class else None,
+            action=alternative.name,
+            confidence=confidence,
+            risk=alternative.risk.value,
+            reason="failure_reflection_replan_candidate",
+            confidence_signals=signal_values,
+            candidate_actions=[item["name"] for item in candidates],
+        )
         if alternative.risk != RiskTier.ALWAYS_CONFIRM and not meets_risk_threshold(
             confidence, alternative.risk.value,
         ):
