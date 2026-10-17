@@ -20,11 +20,11 @@ from prixon.schemas import (
     MacroApprovalRequest,
     MacroRunRequest,
     ProactiveFeedbackRequest,
+    RiskTier,
     RunRequest,
     ResetLearningRequest,
     TeachAliasRequest,
 )
-from prixon.schemas import RiskTier
 
 router = APIRouter(prefix="/api/v1/agent", tags=["Prixon Agent"])
 
