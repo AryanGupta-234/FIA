@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import os
 from typing import Any
 
@@ -25,7 +24,6 @@ from prixon.schemas import (
     ResetLearningRequest,
     TeachAliasRequest,
 )
-from prixon.store import AgentStore
 from prixon.schemas import RiskTier
 
 router = APIRouter(prefix="/api/v1/agent", tags=["Prixon Agent"])
@@ -158,7 +156,7 @@ def delete_learning_alias(payload: DeleteAliasRequest) -> dict[str, Any]:
 @router.post("/learning/reset")
 def reset_learning(payload: ResetLearningRequest) -> dict[str, Any]:
     if not payload.confirmed:
-        return {"status": "confirmation_required", "message": "This removes learned aliases, candidates, negative examples, semantic examples and macros."}
+        return {"status": "confirmation_required", "message": "This removes learned aliases, candidates, negative examples, semantic examples, pending signals, episodes and macros."}
     if runtime.semantic is not None:
         runtime.semantic.clear_user_examples()
     result = runtime.store.remove_all_user_learning()
