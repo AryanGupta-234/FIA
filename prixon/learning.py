@@ -39,12 +39,25 @@ class OwnerLexicon:
             "phrase": phrase, "entity_type": entity_type, "target": target,
         })
 
+    def correct(self, phrase: str, wrong_action: str, corrected_action: str) -> LearningResult:
+        self.store.add_negative_example(phrase, wrong_action)
+        self.store.put_alias(
+            phrase, "action", corrected_action, confidence=0.9, explicit=False,
+        )
+        self.store.audit("owner_corrected_action", {
+            "phrase": phrase, "wrong_action": wrong_action,
+            "corrected_action": corrected_action,
+        })
+        return LearningResult("corrected", phrase, corrected_action, 0.9, 1)
+
     def observe(
         self, phrase: str, action_name: str, *, success: bool,
         session_id: str, risk: RiskTier, explicit: bool = False,
     ) -> LearningResult:
         if explicit and success:
             return self.teach(phrase, action_name)
+        if not success:
+            self.store.add_negative_example(phrase, action_name)
         stats = self.store.observe_alias(phrase, action_name, success, session_id)
         session_count = len(stats["sessions"])
         high_risk = risk == RiskTier.ALWAYS_CONFIRM
