@@ -18,6 +18,7 @@ from prixon.events import (
 from prixon.kill_switch import GlobalHotkey
 from prixon.schemas import AgentPlan
 from prixon.store import AgentStore
+from prixon.voice_kill import VoiceKillListener
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,12 @@ class AgentLoop:
         self.file_observer = FileSystemEventObserver(self.bus)
         self.termination_observer = WinProcessTerminationObserver(self.bus)
         self.hotkey = GlobalHotkey(runtime.kill_switch)
+        self.voice_kill = VoiceKillListener(
+            runtime.kill_switch,
+            enabled=runtime.settings.voice_kill_enabled,
+            model_path=runtime.settings.voice_model_path,
+            capture_seconds=runtime.settings.voice_capture_seconds,
+        )
         self._last_consolidation = float(self.store.get_setting("learning.last_consolidation", 0))
         self._task: asyncio.Task | None = None
         self._running = False
@@ -123,9 +130,11 @@ class AgentLoop:
         downloads_watched = self.file_observer.start()
         process_exit_observer = self.termination_observer.start()
         hotkey_registered = self.hotkey.start()
+        voice_status = self.voice_kill.start()
         self._task = asyncio.create_task(self._run(), name="PrixonAgentLoop")
         self.store.audit("agent_loop_started", {
             "global_hotkey_registered": hotkey_registered,
+            "voice_kill": voice_status,
             "downloads_watched": downloads_watched,
             "process_exit_observer": process_exit_observer,
             "watched_folders": self.file_observer.watched_paths,
@@ -135,6 +144,7 @@ class AgentLoop:
         return {
             "status": "started",
             "global_hotkey": "Ctrl+Alt+Pause" if hotkey_registered else "unavailable",
+            "voice_kill": voice_status,
             "downloads_watched": downloads_watched,
             "process_exit_observer": process_exit_observer,
             "watched_folders": self.file_observer.watched_paths,
@@ -156,6 +166,7 @@ class AgentLoop:
         self.file_observer.stop()
         self.termination_observer.stop()
         self.hotkey.stop()
+        self.voice_kill.stop()
         self.store.audit("agent_loop_stopped", {"reason": reason})
         return {"status": "stopped", "reason": reason}
 
