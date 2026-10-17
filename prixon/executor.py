@@ -56,7 +56,7 @@ class WindowsActionAdapters:
         self.perception = perception
 
     def capture_before(self, action: str, args: dict[str, Any]) -> dict[str, Any]:
-        if action == "window.minimize" or action == "window.restore":
+        if action.startswith("window."):
             hwnd = self._window_handle(args)
             if hwnd and os.name == "nt":
                 import ctypes
@@ -64,7 +64,11 @@ class WindowsActionAdapters:
                 rect = ctypes.wintypes.RECT()
                 user32.GetWindowRect(hwnd, ctypes.byref(rect))
                 return {"hwnd": hwnd, "iconic": bool(user32.IsIconic(hwnd)),
+                        "zoomed": bool(user32.IsZoomed(hwnd)),
                         "rect": [rect.left, rect.top, rect.right, rect.bottom]}
+        if action == "settings.open":
+            foreground = self.perception._foreground_window()
+            return {"previous_hwnd": foreground.get("handle") if foreground else None}
         if action == "volume.set":
             return {"volume": self._get_volume()}
         if action == "file.quarantine":
@@ -91,6 +95,19 @@ class WindowsActionAdapters:
             return {"processes": self.perception.processes(limit=200)}
         if action == "system.battery":
             return {"battery": self.perception.snapshot()["battery"]}
+        if action == "app.is_running":
+            mention = str(args.get("application") or "").casefold().strip()
+            if not mention:
+                raise ValueError("Application name is required.")
+            matches = []
+            for process in psutil.process_iter(["pid", "name"]):
+                try:
+                    name = str(process.info.get("name") or "").casefold()
+                    if mention in name or name.removesuffix(".exe") == mention.removesuffix(".exe"):
+                        matches.append({"pid": int(process.info["pid"]), "name": name})
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+            return {"application": mention, "running": bool(matches), "match_count": len(matches)}
         if action == "system.network":
             counters = psutil.net_io_counters()
             return {
@@ -118,7 +135,7 @@ class WindowsActionAdapters:
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
             return {"launched": target, "application": args.get("application"), "pid": selected_pid}
-        if action in {"window.minimize", "window.restore"}:
+        if action in {"window.minimize", "window.maximize", "window.restore"}:
             self._require_windows()
             hwnd = self._window_handle(args)
             if not hwnd:
@@ -126,9 +143,22 @@ class WindowsActionAdapters:
             import ctypes
             if not ctypes.windll.user32.IsWindow(hwnd):
                 raise ValueError("The target window no longer exists.")
-            command = 6 if action == "window.minimize" else 9
+            command = {"window.minimize": 6, "window.maximize": 3, "window.restore": 9}[action]
             ctypes.windll.user32.ShowWindow(hwnd, command)
-            return {"hwnd": hwnd, "iconic": bool(ctypes.windll.user32.IsIconic(hwnd))}
+            return {
+                "hwnd": hwnd, "iconic": bool(ctypes.windll.user32.IsIconic(hwnd)),
+                "zoomed": bool(ctypes.windll.user32.IsZoomed(hwnd)),
+            }
+        if action == "window.close":
+            self._require_windows()
+            hwnd = self._window_handle(args)
+            if not hwnd:
+                raise ValueError("A grounded window handle is required.")
+            import ctypes
+            if not ctypes.windll.user32.IsWindow(hwnd):
+                raise ValueError("The target window no longer exists.")
+            ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)
+            return {"hwnd": hwnd, "close_requested": True}
         if action == "volume.set":
             level = float(args.get("level", -1))
             if not 0 <= level <= 100:
@@ -142,7 +172,10 @@ class WindowsActionAdapters:
             if not uri:
                 raise ValueError("Setting is not in the approved Settings URI allowlist.")
             os.startfile(uri)  # type: ignore[attr-defined]
-            return {"opened_setting": setting, "uri": uri}
+            time.sleep(0.5)
+            foreground = self.perception._foreground_window()
+            return {"opened_setting": setting, "uri": uri,
+                    "hwnd": foreground.get("handle") if foreground else None}
         if action == "file.quarantine":
             self._require_windows()
             source = self._validated_user_file(args.get("file"))
@@ -203,13 +236,33 @@ class WindowsActionAdapters:
 
     def undo(self, action: str, args: dict[str, Any], before: dict[str, Any], output: dict[str, Any]) -> bool:
         self._require_windows()
-        if action in {"window.minimize", "window.restore"}:
+        if action.startswith("window.") and action != "window.close":
             hwnd = int(before.get("hwnd") or output.get("hwnd") or 0)
             if not hwnd:
                 return False
             import ctypes
-            ctypes.windll.user32.ShowWindow(hwnd, 9 if before.get("iconic") is False else 6)
+            user32 = ctypes.windll.user32
+            if before.get("zoomed"):
+                user32.ShowWindow(hwnd, 3)
+            elif before.get("iconic"):
+                user32.ShowWindow(hwnd, 6)
+            else:
+                user32.ShowWindow(hwnd, 9)
+            if before.get("rect") and not before.get("zoomed") and not before.get("iconic"):
+                from ctypes import wintypes
+                left, top, right, bottom = before["rect"]
+                user32.SetWindowPos(
+                    hwnd, 0, left, top, right - left, bottom - top,
+                    0x0004 | 0x0010,
+                )
             return True
+        if action == "settings.open":
+            hwnd = int(output.get("hwnd") or 0)
+            previous = int(before.get("previous_hwnd") or 0)
+            if hwnd and hwnd != previous:
+                import ctypes
+                return bool(ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0))
+            return False
         if action == "volume.set" and before.get("volume") is not None:
             self._set_volume(float(before["volume"]))
             return True
@@ -311,12 +364,18 @@ class ActionExecutor:
     def verify(self, action_name: str, args: dict[str, Any], output: dict[str, Any]) -> bool:
         if action_name in {"system.status", "process.list", "system.battery", "system.network"}:
             return bool(output)
+        if action_name == "app.is_running":
+            return "running" in output
         if action_name == "app.launch":
             return bool(output.get("launched")) and Path(output["launched"]).exists()
         if action_name == "window.minimize":
             return bool(output.get("iconic"))
+        if action_name == "window.maximize":
+            return bool(output.get("zoomed"))
         if action_name == "window.restore":
             return not bool(output.get("iconic"))
+        if action_name == "window.close":
+            return bool(output.get("close_requested"))
         if action_name == "volume.set":
             return abs(float(output.get("volume", -100)) - float(args["level"])) <= 2
         if action_name == "settings.open":
