@@ -69,9 +69,21 @@ class ProactiveEngine:
                 "A download appears to have completed. Review it when convenient.",
             )
         elif event_type == "routine_due":
+            if payload.get("auto_execute"):
+                return None
             candidate = (
                 str(payload.get("title") or "Routine reminder"),
                 str(payload.get("message") or "A saved routine is due."),
+            )
+        elif event_type == "routine_completed":
+            candidate = (
+                f"{str(payload.get('title') or 'Scheduled routine')} completed",
+                str(payload.get("message") or "The scheduled routine completed."),
+            )
+        elif event_type == "routine_failed":
+            candidate = (
+                f"{str(payload.get('title') or 'Scheduled routine')} needs attention",
+                str(payload.get("message") or "The scheduled routine did not complete."),
             )
         if not candidate:
             return None

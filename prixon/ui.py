@@ -81,7 +81,28 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
       <div class="panel" style="margin-bottom:16px"><div class="eyebrow">Interaction</div><h2 style="margin:5px 0 8px">Command Center</h2><div class="panel-sub">Every request passes through deterministic grounding, confidence gates and the registered action contract.</div><div style="margin-top:18px" class="command-box"><textarea id="commandInput2" placeholder="What should Prixon do?"></textarea><div class="command-actions"><span class="helper">Safe L1/L2 requests may run automatically. L4 requires confirmation.</span><button class="btn primary" id="sendBtn2">Run command ↗</button></div></div><div id="commandResult2" class="result"><strong id="resultTitle2"></strong><p id="resultBody2"></p><div id="confirmRow2" style="display:none;margin-top:11px"><button class="btn primary" id="confirmBtn2">Confirm and execute</button></div></div></div>
       <div class="panel"><div class="panel-head"><div><div class="panel-title">Registered Capabilities</div><div class="panel-sub">Actions currently exposed by the local registry.</div></div><span id="actionCount" class="badge">—</span></div><div id="actionList" class="list"></div></div>
     </section>
-    <section id="view-goals" class="view"><div class="panel"><div class="panel-head"><div><div class="panel-title">Goals & Signals</div><div class="panel-sub">Persistent user goals and suggestion-only proactive events.</div></div><button id="goalRefresh" class="btn subtle">Refresh</button></div><div class="command-box" style="margin:12px 0 16px"><textarea id="goalInput" style="min-height:56px" placeholder="Describe an outcome to keep on Prixon's goal stack…"></textarea><div class="command-actions"><span class="helper">Prixon will prepare a typed plan; L4 steps still need confirmation.</span><button class="btn primary" id="createGoalBtn">Create goal</button></div></div><div id="goalResult" class="result"><strong id="goalResultTitle"></strong><p id="goalResultBody"></p></div><div id="goalList" class="list"><div class="empty">No goals available.</div></div></div></section>
+    <section id="view-goals" class="view">
+      <div class="panel">
+        <div class="panel-head"><div><div class="panel-title">Goals & Signals</div><div class="panel-sub">Persistent user goals and bounded proactive events.</div></div><button id="goalRefresh" class="btn subtle">Refresh</button></div>
+        <div class="command-box" style="margin:12px 0 16px"><textarea id="goalInput" style="min-height:56px" placeholder="Describe an outcome to keep on Prixon's goal stack…"></textarea><div class="command-actions"><span class="helper">Prixon prepares a typed plan; L4 steps still need confirmation.</span><button class="btn primary" id="createGoalBtn">Create goal</button></div></div>
+        <div id="goalResult" class="result"><strong id="goalResultTitle"></strong><p id="goalResultBody"></p></div>
+        <div id="goalList" class="list"><div class="empty">No goals available.</div></div>
+      </div>
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head"><div><div class="panel-title">Scheduled Routines</div><div class="panel-sub">Schedule owner-approved macros. L3 autonomous execution is optional and separately confirmed.</div></div><button id="routineRefresh" class="btn subtle">Refresh</button></div>
+        <div class="grid" style="grid-template-columns:repeat(2,minmax(0,1fr));margin:14px 0">
+          <label class="list-main">Routine name<input id="routineName" maxlength="100" placeholder="Morning workspace" style="width:100%;margin-top:6px"></label>
+          <label class="list-main">Approved macro<select id="routineMacro" style="width:100%;margin-top:6px"><option value="">Loading approved macros…</option></select></label>
+          <label class="list-main">Local time<input id="routineTime" type="time" value="09:00" style="width:100%;margin-top:6px"></label>
+          <label class="list-main">Days<select id="routineDays" style="width:100%;margin-top:6px"><option value="all">Every day</option><option value="weekdays">Weekdays</option><option value="weekends">Weekends</option></select></label>
+        </div>
+        <label class="helper" style="display:flex;align-items:center;gap:9px;margin:4px 0 12px"><input id="routineAutoExecute" type="checkbox"> Enable autonomous L3 execution (only eligible reversible/read-only macros; requires confirmation)</label>
+        <button class="btn primary" id="createRoutineBtn">Schedule routine</button>
+        <div id="routineResult" class="result"><strong id="routineResultTitle"></strong><p id="routineResultBody"></p></div>
+        <div id="routineList" class="list" style="margin-top:12px"></div>
+        <div class="panel-sub" style="margin-top:14px">Recent routine runs</div><div id="routineRunList" class="list"></div>
+      </div>
+    </section>
     <section id="view-activity" class="view"><div class="panel"><div class="panel-head"><div><div class="panel-title">Recent Activity</div><div class="panel-sub">Local action and decision audit summaries.</div></div><div style="display:flex;gap:8px"><a class="btn subtle" href="/api/v1/agent/audit/export" download="prixon-audit.jsonl">Export JSONL</a><button id="auditRefresh" class="btn subtle">Refresh</button></div></div><div id="auditList" class="activity"><div class="empty">No activity loaded.</div></div></div></section>
     <div class="footer-note">PRIXON · LOCAL-FIRST · WINDOWS AUTOMATION · RISK-GATED AUTONOMY</div>
   </main>
@@ -163,6 +184,17 @@ async function refreshGoals(){
   const items=await request("/goals");
   fillList("goalList",items,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.description||"Goal")+'</strong><small>Priority '+esc(item.priority)+' · '+esc(item.created_at||"")+'</small></div><div style="display:flex;gap:7px;align-items:center"><span class="badge '+(item.status==="completed"?"good":"")+'">'+esc(item.status)+'</span>'+(["pending","active"].includes(item.status)?'<button class="btn subtle" data-goal-cancel="'+esc(item.id)+'">Cancel</button>':"")+'</div></div>',"No stored goals.");
 }
+
+async function refreshRoutines(){
+  const [routines,macros,runs]=await Promise.all([
+    request("/routines"),request("/macros?approved=true"),request("/routine-runs?limit=12")
+  ]);
+  const selected=$("routineMacro").value;
+  $("routineMacro").innerHTML='<option value="">Choose an approved macro</option>'+macros.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.name)+' · '+esc(m.successes)+' successes</option>').join("");
+  if(macros.some(m=>String(m.id)===selected))$("routineMacro").value=selected;
+  fillList("routineList",routines,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.name)+'</strong><small>'+esc(item.time_local)+' · '+(item.weekdays||[]).map(n=>["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][n]).join(", ")+'</small></div><div style="display:flex;gap:7px;align-items:center"><span class="badge '+(item.auto_execute?"good":"")+'">'+(item.auto_execute?"L3 auto":"Review first")+'</span><span class="badge">'+(item.enabled?"Enabled":"Paused")+'</span><button class="btn subtle" data-routine-toggle="'+esc(item.id)+'" data-enabled="'+(!item.enabled)+'">'+(item.enabled?"Pause":"Enable")+'</button></div></div>',"No scheduled routines.");
+  fillList("routineRunList",runs,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.routine_name||"Routine")+'</strong><small>'+esc(item.due_date)+' · '+esc(item.status)+'</small></div><span class="badge '+(item.status==="completed"?"good":item.status==="failed"||item.status==="interrupted"?"warn":"")+'">'+esc(item.status)+'</span></div>',"No routine runs recorded.");
+}
 async function refreshAudit(){
   const items=await request("/audit?limit=30");
   fillList("auditList",items,item=>'<div class="activity-item"><strong>'+esc(item.event_type||"activity")+'</strong><small>'+esc(new Date((item.created_at||0)*1000).toLocaleString())+'</small></div>',"No recent audit activity.");
@@ -179,7 +211,7 @@ async function refreshAll(){
 function showView(name){
   document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active",v.id==="view-"+name));
   document.querySelectorAll(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.view===name));
-  if(name==="goals")refreshGoals().catch(e=>console.error(e));
+  if(name==="goals"){refreshGoals().catch(e=>console.error(e));refreshRoutines().catch(e=>console.error(e));}
   if(name==="activity")refreshAudit().catch(e=>console.error(e));
   if(name==="command")refreshActions().catch(e=>console.error(e));
 }
@@ -223,6 +255,45 @@ $("goalList").addEventListener("click",async event=>{
   }catch(error){alert(error.message);button.disabled=false;}
 });
 $("goalRefresh").addEventListener("click",()=>refreshGoals());
+
+$("routineRefresh").addEventListener("click",()=>refreshRoutines().catch(e=>console.error(e)));
+$("createRoutineBtn").addEventListener("click",async()=>{
+  const name=$("routineName").value.trim();
+  const macroId=Number($("routineMacro").value);
+  const timeLocal=$("routineTime").value;
+  const dayMode=$("routineDays").value;
+  const weekdays=dayMode==="weekdays"?[0,1,2,3,4]:dayMode==="weekends"?[5,6]:[0,1,2,3,4,5,6];
+  const autoExecute=$("routineAutoExecute").checked;
+  if(!name||!macroId||!timeLocal)return;
+  const confirmed=autoExecute?window.confirm("Allow this owner-approved routine to run automatically at L3? Only reversible/read-only, non-sensitive actions are eligible."):false;
+  if(autoExecute&&!confirmed)return;
+  const button=$("createRoutineBtn");button.disabled=true;button.textContent="Scheduling…";
+  try{
+    const result=await request("/routines",{method:"POST",body:JSON.stringify({
+      name,macro_id:macroId,time_local:timeLocal,weekdays,auto_execute:autoExecute,confirmed
+    })});
+    $("routineResult").classList.add("show");
+    $("routineResultTitle").textContent="Routine scheduled";
+    $("routineResultBody").textContent=result.execution==="owner_approved_l3"?"Owner-confirmed L3 execution is enabled.":"Prixon will suggest the routine at its scheduled time.";
+    $("routineName").value="";$("routineAutoExecute").checked=false;
+    await refreshRoutines();
+  }catch(error){
+    $("routineResult").classList.add("show");
+    $("routineResultTitle").textContent="Routine not scheduled";
+    $("routineResultBody").textContent=error.message;
+  }finally{button.disabled=false;button.textContent="Schedule routine";}
+});
+$("routineList").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-routine-toggle]");
+  if(!button)return;
+  button.disabled=true;
+  try{
+    await request("/routines/"+encodeURIComponent(button.dataset.routineToggle)+"/status",{
+      method:"POST",body:JSON.stringify({enabled:button.dataset.enabled==="true"})
+    });
+    await refreshRoutines();
+  }catch(error){alert(error.message);button.disabled=false;}
+});
 $("auditRefresh").addEventListener("click",()=>refreshAudit());
 $("killBtn").addEventListener("click",async()=>{try{await request("/kill",{method:"POST",body:"{}"});await refreshAll();}catch(e){alert(e.message);}});
 $("startBtn").addEventListener("click",async()=>{try{await request("/runtime/start",{method:"POST",body:"{}"});await refreshAll();}catch(e){alert(e.message);}});

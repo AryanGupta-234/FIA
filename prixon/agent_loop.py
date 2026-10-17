@@ -118,6 +118,27 @@ class AgentLoop:
             })
         return len(interrupted)
 
+    def recover_interrupted_routines(self) -> int:
+        interrupted = [
+            item for item in self.store.routine_execution_rows(200)
+            if item.get("status") == "started"
+        ]
+        recovered = 0
+        for item in interrupted:
+            changed = self.store.finish_routine_execution(
+                item["routine_id"], item["due_date"], "interrupted",
+                {"reason": "agent_restarted_before_completion_was_recorded",
+                 "automatic_replay": False},
+            )
+            if changed:
+                recovered += 1
+                self.store.audit("routine_execution_interrupted", {
+                    "routine_id": item["routine_id"],
+                    "due_date": item["due_date"],
+                    "automatic_replay": False,
+                })
+        return recovered
+
     def replay_persisted_events(self, limit: int = 500) -> int:
         events = self.store.pending_events(limit=limit)
         for event in events:
@@ -133,6 +154,7 @@ class AgentLoop:
         self._running = True
         self._asyncio_loop = asyncio.get_running_loop()
         interrupted_count = self.recover_interrupted_goals()
+        interrupted_routines = self.recover_interrupted_routines()
         replayed_count = self.replay_persisted_events()
         await self.process_observer.start()
         self.window_observer.start()
@@ -148,6 +170,7 @@ class AgentLoop:
             "process_exit_observer": process_exit_observer,
             "watched_folders": self.file_observer.watched_paths,
             "interrupted_goals": interrupted_count,
+            "interrupted_routines": interrupted_routines,
             "replayed_events": replayed_count,
         })
         return {
@@ -283,6 +306,73 @@ class AgentLoop:
                 persisted_id = event.persisted_id or self.store.enqueue_event(
                     event.event_type, event.payload,
                 )
+                routine_auto_execution = (
+                    event.event_type == "routine_due"
+                    and bool(event.payload.get("auto_execute"))
+                )
+                if routine_auto_execution:
+                    routine_id = int(event.payload.get("routine_id") or 0)
+                    macro_id = int(event.payload.get("macro_id") or 0)
+                    due_date = str(event.payload.get("run_date") or "")
+                    claimed = bool(
+                        routine_id and macro_id and due_date
+                        and self.store.claim_routine_execution(routine_id, due_date)
+                    )
+                    if not claimed:
+                        self.store.audit("routine_execution_duplicate_suppressed", {
+                            "routine_id": routine_id,
+                            "due_date": due_date,
+                            "reason": "already_claimed_or_invalid_run_key",
+                        })
+                    else:
+                        try:
+                            routine_result = await self.runtime.run_macro(
+                                macro_id, {}, execute=True, confirmed=False,
+                                session_id=f"routine:{routine_id}:{due_date}",
+                            )
+                            raw_execution = routine_result.get("execution") or {}
+                            step_results = raw_execution.get("steps") or []
+                            success = (
+                                routine_result.get("status") == "completed"
+                                and bool(step_results)
+                                and all(
+                                    item.get("success") and item.get("verified")
+                                    for item in step_results
+                                )
+                            )
+                            run_status = "completed" if success else "failed"
+                            safe_result = self.runtime._safe_execution_audit(routine_result)
+                        except Exception as exc:
+                            run_status = "failed"
+                            safe_result = {
+                                "status": "failed",
+                                "error": f"{type(exc).__name__}:{exc}",
+                            }
+                        self.store.finish_routine_execution(
+                            routine_id, due_date, run_status, safe_result,
+                        )
+                        completion_event = (
+                            "routine_completed" if run_status == "completed"
+                            else "routine_failed"
+                        )
+                        self.bus.publish(completion_event, {
+                            "routine_id": routine_id,
+                            "macro_id": macro_id,
+                            "run_date": due_date,
+                            "title": str(event.payload.get("title") or "Scheduled routine"),
+                            "message": (
+                                "Your approved routine completed and every step was verified."
+                                if run_status == "completed"
+                                else "Your approved routine did not complete successfully. Review its run details."
+                            ),
+                        })
+                        self.store.audit("routine_execution_finished", {
+                            "routine_id": routine_id,
+                            "macro_id": macro_id,
+                            "due_date": due_date,
+                            "status": run_status,
+                            "result": safe_result,
+                        })
                 if event.event_type in {"file_created", "file_moved", "folder_created", "folder_moved"}:
                     path = event.payload.get("path")
                     if path:
@@ -332,7 +422,7 @@ class AgentLoop:
                 fullscreen = _fullscreen_active(
                     int(foreground["handle"]) if foreground and foreground.get("handle") else None
                 )
-                candidate = self.runtime.proactive.candidate(
+                candidate = None if routine_auto_execution else self.runtime.proactive.candidate(
                     event.event_type, event.payload,
                     focus_mode=focus, fullscreen=fullscreen,
                 )
@@ -396,6 +486,8 @@ class AgentLoop:
                 "routine_id": routine["id"], "macro_id": routine["macro_id"],
                 "title": routine["name"],
                 "message": f"Your approved routine is scheduled for {routine['time_local']}. Review it before running.",
+                "auto_execute": routine.get("auto_execute", False),
+                "run_date": routine.get("run_date"),
             }, persisted_id=routine["event_id"])
         return len(due)
 
