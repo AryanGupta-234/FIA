@@ -18,4 +18,6 @@ class PrixonSettings(BaseSettings):
     voice_kill_enabled: bool = False
     voice_model_path: str = ""
     voice_capture_seconds: float = 5.0
+    browser_debug_enabled: bool = False
+    browser_debug_port: int = 9222
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_prefix="PRIXON_")
