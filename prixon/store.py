@@ -389,6 +389,11 @@ class AgentStore:
             ).fetchone()
             return int(row["id"])
 
+    def remove_entity_target(self, target: str) -> int:
+        with self.connect() as db:
+            cursor = db.execute("DELETE FROM entities WHERE target=?", (target,))
+            return int(cursor.rowcount)
+
     def entity_rows(self, kind: str | None = None) -> list[dict[str, Any]]:
         with self.connect() as db:
             if kind:
