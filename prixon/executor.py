@@ -233,10 +233,21 @@ class WindowsActionAdapters:
             if not uri:
                 raise ValueError("Setting is not in the approved Settings URI allowlist.")
             os.startfile(uri)  # type: ignore[attr-defined]
-            time.sleep(0.5)
-            foreground = self.perception._foreground_window()
-            return {"opened_setting": setting, "uri": uri,
-                    "hwnd": foreground.get("handle") if foreground else None}
+            hwnd = None
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                foreground = self.perception._foreground_window()
+                if foreground and not foreground.get("sensitive") and foreground.get("handle"):
+                    try:
+                        process_name = psutil.Process(int(foreground["pid"])).name().casefold()
+                        title = str(foreground.get("title") or "").casefold()
+                        if process_name == "systemsettings.exe" or "settings" in title:
+                            hwnd = int(foreground["handle"])
+                            break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                time.sleep(0.1)
+            return {"opened_setting": setting, "uri": uri, "hwnd": hwnd}
         if action == "file.quarantine":
             self._require_windows()
             source = self._validated_user_file(args.get("file"))
@@ -399,7 +410,7 @@ class ActionExecutor:
         except Exception as exc:
             return ActionResult(False, action_name, error=f"precondition_failed:{type(exc).__name__}:{exc}")
         undo_id = None
-        if action.risk != RiskTier.READ_ONLY:
+        if action.undo_supported:
             undo_id = self.store.record_undo(action_name, args, before)
         future = self._executor.submit(self.adapters.execute, action_name, args)
         try:
@@ -459,7 +470,7 @@ class ActionExecutor:
         if action_name == "volume.set":
             return abs(float(output.get("volume", -100)) - float(args["level"])) <= 2
         if action_name == "settings.open":
-            return bool(output.get("opened_setting"))
+            return bool(output.get("opened_setting")) and output.get("hwnd") is not None
         if action_name == "file.quarantine":
             return Path(output.get("quarantined_path", "")).is_file()
         return False
