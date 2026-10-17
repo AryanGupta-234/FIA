@@ -41,7 +41,21 @@ class EntityIndex:
 
     @staticmethod
     def _alias_target_exists(target_type: str, target: str) -> bool:
-        if target_type in {"application", "file", "folder"}:
+        if target_type == "application":
+            path = Path(target).expanduser()
+            try:
+                resolved = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                return False
+            roots = [
+                Path(os.environ.get("APPDATA", "C:/__missing__")) / "Microsoft/Windows/Start Menu/Programs",
+                Path(os.environ.get("PROGRAMDATA", "C:/__missing__")) / "Microsoft/Windows/Start Menu/Programs",
+                Path(os.environ.get("WINDIR", "C:/Windows")) / "System32",
+            ]
+            return resolved.is_file() and any(
+                resolved == root.resolve() or root.resolve() in resolved.parents for root in roots
+            )
+        if target_type in {"file", "folder"}:
             path = Path(target).expanduser()
             try:
                 resolved = path.resolve(strict=True)
@@ -50,7 +64,7 @@ class EntityIndex:
             home = Path.home().resolve()
             if resolved != home and home not in resolved.parents:
                 return False
-            return resolved.is_file() if target_type in {"application", "file"} else resolved.is_dir()
+            return resolved.is_file() if target_type == "file" else resolved.is_dir()
         if target_type == "window":
             try:
                 handle = int(target)
@@ -78,7 +92,13 @@ class EntityIndex:
             scope_matches = all(
                 (context or {}).get(key) == value for key, value in alias_scope.items()
             )
-            target_exists = self._alias_target_exists(alias["target_type"], alias["target"])
+            target_exists = (
+                any(
+                    row["kind"] == alias["target_type"] and row["target"] == alias["target"]
+                    for row in self.store.entity_rows(alias["target_type"])
+                )
+                or self._alias_target_exists(alias["target_type"], alias["target"])
+            )
             if scope_matches and target_exists:
                 return {
                     "kind": alias["target_type"],
