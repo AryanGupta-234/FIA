@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -81,11 +82,17 @@ class AgentLoop:
         self.file_observer = FileSystemEventObserver(self.bus)
         self.termination_observer = WinProcessTerminationObserver(self.bus)
         self.hotkey = GlobalHotkey(runtime.kill_switch)
+        self._asyncio_loop: asyncio.AbstractEventLoop | None = None
+        self._voice_results: list[dict[str, Any]] = []
+        self._voice_results_lock = threading.Lock()
         self.voice_kill = VoiceKillListener(
             runtime.kill_switch,
             enabled=runtime.settings.voice_kill_enabled,
             model_path=runtime.settings.voice_model_path,
             capture_seconds=runtime.settings.voice_capture_seconds,
+            command_enabled=runtime.settings.voice_commands_enabled,
+            command_capture_seconds=runtime.settings.voice_command_capture_seconds,
+            on_command=self._submit_voice_command,
         )
         self._last_consolidation = float(self.store.get_setting("learning.last_consolidation", 0))
         self._task: asyncio.Task | None = None
@@ -123,6 +130,7 @@ class AgentLoop:
             return {"status": "already_running"}
         self.runtime.kill_switch.reset()
         self._running = True
+        self._asyncio_loop = asyncio.get_running_loop()
         interrupted_count = self.recover_interrupted_goals()
         replayed_count = self.replay_persisted_events()
         await self.process_observer.start()
@@ -167,8 +175,60 @@ class AgentLoop:
         self.termination_observer.stop()
         self.hotkey.stop()
         await asyncio.to_thread(self.voice_kill.stop)
+        self._asyncio_loop = None
         self.store.audit("agent_loop_stopped", {"reason": reason})
         return {"status": "stopped", "reason": reason}
+
+    def voice_results(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._voice_results_lock:
+            return [dict(item) for item in self._voice_results[-max(1, min(limit, 50)):]]
+
+    def _submit_voice_command(self, utterance: str) -> dict[str, Any]:
+        """Run a recognized push-to-talk command through the ordinary gated runtime."""
+        loop = self._asyncio_loop
+        if loop is None or not loop.is_running():
+            return {
+                "status": "runtime_unavailable",
+                "spoken_response": "Prixon is not running. Start the agent first.",
+            }
+        future = asyncio.run_coroutine_threadsafe(
+            self.runtime.run_request(utterance, execute=None, confirmed=False),
+            loop,
+        )
+        try:
+            result = future.result(timeout=90)
+        except Exception as exc:
+            return {
+                "status": "failed",
+                "spoken_response": f"The voice command could not finish: {type(exc).__name__}.",
+            }
+
+        status = str(result.get("status") or "unknown")
+        action = result.get("action")
+        if status == "confirmation_required":
+            spoken = "That action needs explicit confirmation in Prixon."
+        elif status in {"clarify", "unresolved"}:
+            spoken = str(result.get("clarification") or "I need one more detail before acting.")
+        elif status in {"completed", "partially_recovered"}:
+            spoken = str(result.get("answer") or "Done.")
+        elif status in {"planned", "preview"}:
+            spoken = "I prepared a safe plan. Review it in Prixon before running."
+        else:
+            spoken = "I could not complete that request safely."
+        record = {
+            "created_at": time.time(),
+            "status": status,
+            "action": str(action) if action else None,
+            "spoken_response": spoken[:240],
+        }
+        with self._voice_results_lock:
+            self._voice_results.append(record)
+            self._voice_results = self._voice_results[-50:]
+        return {
+            "status": status,
+            "action": record["action"],
+            "spoken_response": record["spoken_response"],
+        }
 
     async def _run(self) -> None:
         while self._running:
