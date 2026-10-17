@@ -45,6 +45,7 @@ class GlobalHotkey:
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
         self._thread_id: int | None = None
+        self._registered = False
 
     def start(self) -> bool:
         if os.name != "nt":
@@ -55,7 +56,7 @@ class GlobalHotkey:
         self._thread = threading.Thread(target=self._run, name="PrixonKillHotkey", daemon=True)
         self._thread.start()
         self._started.wait(timeout=2)
-        return self._started.is_set()
+        return self._started.is_set() and self._registered
 
     def stop(self) -> None:
         if self._thread_id and os.name == "nt":
@@ -75,6 +76,7 @@ class GlobalHotkey:
         ):
             self._started.set()
             return
+        self._registered = True
         self._started.set()
         message = wintypes.MSG()
         try:
@@ -83,3 +85,4 @@ class GlobalHotkey:
                     self.kill_switch.trigger("global_hotkey_ctrl_alt_pause")
         finally:
             user32.UnregisterHotKey(None, self.HOTKEY_ID)
+            self._registered = False
