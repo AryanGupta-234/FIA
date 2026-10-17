@@ -1,6 +1,9 @@
 import asyncio
 from collections import deque
 
+import httpx
+import pytest
+
 from prixon.benchmark import benchmark_runtime, summarize_benchmark_rows
 from prixon.ollama import OllamaClient
 
@@ -36,6 +39,60 @@ def test_ollama_metrics_summary_reports_success_and_failed_attempts():
     assert summary["latency_p95_ms"] == 40.0
     assert summary["prompt_tokens_total"] == 12
     assert summary["completion_tokens_total"] == 6
+
+
+def test_generate_json_distinguishes_malformed_json_from_transport_failure(monkeypatch):
+    class FakeResponse:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"content": self.content}}
+
+    class FakeAsyncClient:
+        content = '{"ready": true}'
+        raise_transport_error = False
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            if self.raise_transport_error:
+                raise httpx.ConnectError("local Ollama is unavailable")
+            return FakeResponse(self.content)
+
+    monkeypatch.setattr("prixon.ollama.httpx.AsyncClient", FakeAsyncClient)
+    client = OllamaClient()
+
+    valid = asyncio.run(client.generate_json("system", "prompt", {"type": "object"}))
+    assert valid == {"ready": True}
+    assert client.json_valid_count == 1
+    assert client.successful_call_count == 1
+
+    FakeAsyncClient.content = "this is not JSON"
+    with pytest.raises(ValueError):
+        asyncio.run(client.generate_json("system", "prompt", {"type": "object"}))
+    assert client.json_invalid_count == 1
+    assert client.failed_call_count == 1
+    assert client.last_metrics["json_valid"] is False
+
+    FakeAsyncClient.raise_transport_error = True
+    with pytest.raises(httpx.ConnectError):
+        asyncio.run(client.generate_json("system", "prompt", {"type": "object"}))
+    assert client.call_count == 3
+    assert client.failed_call_count == 2
+    assert client.json_valid_count == 1
+    assert client.json_invalid_count == 1
+    assert client.last_metrics["json_valid"] is None
 
 
 def test_benchmark_summary_calculates_latency_and_local_model_share():
