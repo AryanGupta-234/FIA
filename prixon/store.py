@@ -70,6 +70,13 @@ class AgentStore:
                     last_updated REAL NOT NULL,
                     PRIMARY KEY(phrase, action_name)
                 );
+                CREATE TABLE IF NOT EXISTS semantic_examples (
+                    action_name TEXT NOT NULL,
+                    phrase TEXT NOT NULL,
+                    vector_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY(action_name, phrase)
+                );
                 CREATE TABLE IF NOT EXISTS episodes (
                     id TEXT PRIMARY KEY,
                     utterance TEXT NOT NULL,
@@ -368,7 +375,49 @@ class AgentStore:
             aliases = db.execute("DELETE FROM aliases").rowcount
             candidates = db.execute("DELETE FROM alias_candidates").rowcount
             negatives = db.execute("DELETE FROM negative_examples").rowcount
-        return {"aliases": int(aliases), "candidates": int(candidates), "negative_examples": int(negatives)}
+            examples = db.execute("DELETE FROM semantic_examples").rowcount
+            macros = db.execute("DELETE FROM macros").rowcount
+        return {
+            "aliases": int(aliases), "candidates": int(candidates),
+            "negative_examples": int(negatives), "semantic_examples": int(examples),
+            "macros": int(macros),
+        }
+
+    def add_semantic_example(
+        self, action_name: str, phrase: str, vector: list[float],
+    ) -> None:
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO semantic_examples(action_name,phrase,vector_json,created_at)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(action_name,phrase) DO UPDATE SET
+                   vector_json=excluded.vector_json,created_at=excluded.created_at""",
+                (action_name, phrase, json.dumps(vector), time.time()),
+            )
+
+    def semantic_examples(self, action_name: str | None = None) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            if action_name:
+                rows = db.execute(
+                    "SELECT * FROM semantic_examples WHERE action_name=? ORDER BY created_at DESC",
+                    (action_name,),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM semantic_examples ORDER BY created_at DESC",
+                ).fetchall()
+            return [
+                {"action_name": row["action_name"], "phrase": row["phrase"],
+                 "vector": json.loads(row["vector_json"]), "created_at": row["created_at"]}
+                for row in rows
+            ]
+
+    def remove_semantic_example(self, action_name: str, phrase: str) -> None:
+        with self.connect() as db:
+            db.execute(
+                "DELETE FROM semantic_examples WHERE action_name=? AND phrase=?",
+                (action_name, phrase),
+            )
 
     def undo_record(self, undo_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
