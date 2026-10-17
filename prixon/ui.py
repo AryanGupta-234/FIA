@@ -125,6 +125,8 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
         <div id="learningCandidates" class="list"><div class="empty">Loading candidates…</div></div>
         <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Routine Macros</div><div class="panel-sub">Review repeated successful plan shapes. Approved macros are available to the routine scheduler.</div></div></div>
         <div id="macroList" class="list"><div class="empty">Loading macro proposals…</div></div>
+        <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Decision Review</div><div class="panel-sub">Tell Prixon whether the selected interpretation matched your intent. These explicit labels are used for offline calibration.</div></div></div>
+        <div id="decisionReviewList" class="list"><div class="empty">Loading recent decisions…</div></div>
         <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Negative memory</div><div class="panel-sub">Phrases previously corrected away from an action.</div></div></div>
         <div id="negativeMemory" class="list"><div class="empty">Loading corrections…</div></div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:20px">
@@ -227,8 +229,9 @@ async function refreshRoutines(){
   fillList("routineRunList",runs,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.routine_name||"Routine")+'</strong><small>'+esc(item.due_date)+' · '+esc(item.status)+'</small></div><span class="badge '+(item.status==="completed"?"good":item.status==="failed"||item.status==="interrupted"?"warn":"")+'">'+esc(item.status)+'</span></div>',"No routine runs recorded.");
 }
 async function refreshLearning(){
-  const [state,digest,macros,actions]=await Promise.all([
-    request("/learning"),request("/learning/digest"),request("/macros"),request("/actions")
+  const [state,digest,macros,actions,decisions]=await Promise.all([
+    request("/learning"),request("/learning/digest"),request("/macros"),request("/actions"),
+    request("/decisions/review?limit=60")
   ]);
   const aliases=state.aliases||[],candidates=digest.ready_for_approval||[],negatives=state.negative_examples||[];
   const selectedAction=$("teachAction").value;
@@ -249,6 +252,16 @@ async function refreshLearning(){
       : '<button class="btn primary" data-macro-toggle="'+esc(item.id)+'" data-approved="true">Approve</button>';
     return '<div class="list-item"><div class="list-main"><strong>'+esc(item.name)+'</strong><small>'+esc(shape)+' · '+esc(item.successes)+' successes / '+esc(item.failures)+' failures</small></div><div style="display:flex;gap:7px;align-items:center"><span class="badge '+(item.approved?"good":"")+'">'+(item.approved?"Approved":"Proposal")+'</span>'+controls+'</div></div>';
   },"No macro proposals yet. Repeated successful plans appear here.");
+  fillList("decisionReviewList",decisions,item=>{
+    const decision=item.decision||{},outcome=item.outcome||{};
+    const title=decision.action||"No action selected";
+    const result=outcome.outcome||decision.status||"awaiting outcome";
+    const reviewed=item.owner_correct!==null;
+    const review=reviewed
+      ? '<span class="badge '+(item.owner_correct?"good":"warn")+'">'+(item.owner_correct?"Owner marked correct":"Owner marked incorrect")+'</span>'
+      : '<div style="display:flex;gap:6px"><button class="btn primary" data-decision-review="'+esc(item.decision_id)+'" data-correct="true">Correct</button><button class="btn subtle" data-decision-review="'+esc(item.decision_id)+'" data-correct="false">Incorrect</button></div>';
+    return '<div class="list-item"><div class="list-main"><strong>'+esc(decision.utterance||"Decision")+' → '+esc(title)+'</strong><small>'+esc(result)+' · '+esc(decision.risk||"unclassified")+' · confidence '+Math.round((decision.confidence||0)*100)+'%</small></div>'+review+'</div>';
+  },"No decisions recorded yet.");
   fillList("negativeMemory",negatives,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' ↛ '+esc(item.action_name)+'</strong><small>'+esc(item.corrections)+' corrections · penalty '+Math.round((item.penalty||0)*100)+'%</small></div></div>',"No negative examples stored.");
 }
 async function refreshAudit(){
@@ -386,6 +399,19 @@ $("teachMappingBtn").addEventListener("click",async()=>{
     await refreshLearning();
   }catch(error){alert(error.message);}
   finally{button.disabled=false;}
+});
+$("decisionReviewList").addEventListener("click",async event=>{
+  const button=event.target.closest("[data-decision-review]");
+  if(!button)return;
+  const correct=button.dataset.correct==="true";
+  if(!window.confirm("Record this decision as "+(correct?"correct":"incorrect")+" for future calibration?"))return;
+  button.disabled=true;
+  try{
+    await request("/decision-feedback",{method:"POST",body:JSON.stringify({
+      decision_id:button.dataset.decisionReview,correct,notes:"Owner reviewed in the Prixon control panel.",confirmed:true
+    })});
+    await refreshLearning();
+  }catch(error){alert(error.message);button.disabled=false;}
 });
 $("macroList").addEventListener("click",async event=>{
   const button=event.target.closest("[data-macro-toggle]");
