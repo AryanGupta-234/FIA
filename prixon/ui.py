@@ -127,6 +127,17 @@ main{padding:28px clamp(18px,3vw,42px) 48px;max-width:1600px;width:100%;margin:0
         <div id="macroList" class="list"><div class="empty">Loading macro proposals…</div></div>
         <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Decision Review</div><div class="panel-sub">Tell Prixon whether the selected interpretation matched your intent. These explicit labels are used for offline calibration.</div></div></div>
         <div id="decisionReviewList" class="list"><div class="empty">Loading recent decisions…</div></div>
+        <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Confidence Calibration</div><div class="panel-sub">Fit candidate weights from explicitly reviewed decisions. A proposal never changes active policy until frozen-set evidence and owner approval.</div></div></div>
+        <div id="calibrationSummary" class="metric" style="margin:10px 0"><div class="metric-label">CURRENT CALIBRATION</div><div class="metric-value" style="font-size:15px">Loading…</div><div class="metric-foot">L4 remains always-confirm</div></div>
+        <button id="calibrationProposeBtn" class="btn primary">Generate offline proposal</button>
+        <div id="calibrationProposal" class="list" style="margin-top:12px"><div class="empty">No calibration proposal loaded.</div></div>
+        <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));margin-top:12px">
+          <label class="list-main">Frozen accuracy before<input id="calibrationBefore" type="number" min="0" max="1" step="0.0001" placeholder="e.g. 0.94" style="width:100%;margin-top:6px"></label>
+          <label class="list-main">Frozen accuracy after<input id="calibrationAfter" type="number" min="0" max="1" step="0.0001" placeholder="e.g. 0.95" style="width:100%;margin-top:6px"></label>
+          <label class="list-main">Wrong-execution rate after<input id="calibrationWrongRate" type="number" min="0" max="1" step="0.0001" placeholder="e.g. 0.01" style="width:100%;margin-top:6px"></label>
+        </div>
+        <label class="helper" style="display:flex;align-items:center;gap:9px;margin:10px 0"><input id="calibrationRegressionPassed" type="checkbox"> I ran the frozen regression comparison and confirmed it did not regress.</label>
+        <button id="calibrationApplyBtn" class="btn danger">Activate reviewed policy</button>
         <div class="panel-head" style="margin-top:22px"><div><div class="panel-title">Negative memory</div><div class="panel-sub">Phrases previously corrected away from an action.</div></div></div>
         <div id="negativeMemory" class="list"><div class="empty">Loading corrections…</div></div>
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:20px">
@@ -231,7 +242,7 @@ async function refreshRoutines(){
 async function refreshLearning(){
   const [state,digest,macros,actions,decisions]=await Promise.all([
     request("/learning"),request("/learning/digest"),request("/macros"),request("/actions"),
-    request("/decisions/review?limit=60")
+    request("/decisions/review?limit=60"),request("/calibration/proposal")
   ]);
   const aliases=state.aliases||[],candidates=digest.ready_for_approval||[],negatives=state.negative_examples||[];
   const selectedAction=$("teachAction").value;
@@ -262,6 +273,15 @@ async function refreshLearning(){
       : '<div style="display:flex;gap:6px"><button class="btn primary" data-decision-review="'+esc(item.decision_id)+'" data-correct="true">Correct</button><button class="btn subtle" data-decision-review="'+esc(item.decision_id)+'" data-correct="false">Incorrect</button></div>';
     return '<div class="list-item"><div class="list-main"><strong>'+esc(decision.utterance||"Decision")+' → '+esc(title)+'</strong><small>'+esc(result)+' · '+esc(decision.risk||"unclassified")+' · confidence '+Math.round((decision.confidence||0)*100)+'%</small></div>'+review+'</div>';
   },"No decisions recorded yet.");
+  const proposalStatus=calibration.status||"not_proposed";
+  $("calibrationSummary").innerHTML='<div class="metric-label">CURRENT CALIBRATION</div><div class="metric-value" style="font-size:15px">'+esc(proposalStatus==="ready_for_owner_review"?"Proposal ready for owner review":proposalStatus==="not_proposed"?"No proposal generated":proposalStatus==="insufficient_data"?"More owner reviews required":proposalStatus)+'</div><div class="metric-foot">'+esc(calibration.owner_reviewed_samples||0)+' owner-reviewed selected decisions · L4 always confirms</div>';
+  if(proposalStatus==="ready_for_owner_review"){
+    const risks=calibration.risk_thresholds||{};
+    const riskSummary=Object.entries(risks).map(([tier,item])=>tier+": "+item.threshold+" ("+item.status+")").join(" · ");
+    $("calibrationProposal").innerHTML='<div class="list-item"><div class="list-main"><strong>Inactive proposal '+esc(calibration.proposal_id||"")+'</strong><small>Wrong-execution target '+esc(calibration.max_wrong_execution_rate)+' · proposed weights '+esc(JSON.stringify(calibration.weights||{}))+'</small><small>'+esc(riskSummary)+'</small></div><span class="badge warn">Not active</span></div>';
+  }else{
+    $("calibrationProposal").innerHTML='<div class="empty">'+esc(calibration.message||"Generate a proposal after at least 20 owner-reviewed selected decisions.")+'</div>';
+  }
   fillList("negativeMemory",negatives,item=>'<div class="list-item"><div class="list-main"><strong>'+esc(item.phrase)+' ↛ '+esc(item.action_name)+'</strong><small>'+esc(item.corrections)+' corrections · penalty '+Math.round((item.penalty||0)*100)+'%</small></div></div>',"No negative examples stored.");
 }
 async function refreshAudit(){
@@ -412,6 +432,34 @@ $("decisionReviewList").addEventListener("click",async event=>{
     })});
     await refreshLearning();
   }catch(error){alert(error.message);button.disabled=false;}
+});
+$("calibrationProposeBtn").addEventListener("click",async()=>{
+  const button=$("calibrationProposeBtn");button.disabled=true;button.textContent="Fitting offline proposal…";
+  try{
+    const result=await request("/calibration/propose?max_wrong_execution_rate=0.02",{method:"POST"});
+    await refreshLearning();
+    if(result.status!=="ready_for_owner_review")alert(result.message||"More reviewed decisions are required.");
+  }catch(error){
+    $("calibrationProposal").innerHTML='<div class="empty">'+esc(error.message)+'</div>';
+  }finally{button.disabled=false;button.textContent="Generate offline proposal";}
+});
+$("calibrationApplyBtn").addEventListener("click",async()=>{
+  const before=Number($("calibrationBefore").value),after=Number($("calibrationAfter").value),wrong=Number($("calibrationWrongRate").value);
+  if(!Number.isFinite(before)||!Number.isFinite(after)||!Number.isFinite(wrong)){alert("Enter frozen accuracy before/after and the measured wrong-execution rate.");return;}
+  if(!$("calibrationRegressionPassed").checked){alert("Run the frozen regression comparison and confirm it did not regress.");return;}
+  if(after<before){alert("Frozen accuracy regressed. Do not activate this proposal.");return;}
+  if(!window.confirm("Activate this calibration proposal? Active decision weights and risk thresholds will change. L4 will still always require confirmation."))return;
+  const button=$("calibrationApplyBtn");button.disabled=true;
+  try{
+    const result=await request("/calibration/apply",{method:"POST",body:JSON.stringify({
+      confirmed:true,frozen_regression_passed:true,
+      frozen_accuracy_before:before,frozen_accuracy_after:after,
+      wrong_execution_rate_after:wrong
+    })});
+    alert("Calibration activated: "+result.proposal_id);
+    await refreshLearning();
+  }catch(error){alert(error.message);}
+  finally{button.disabled=false;}
 });
 $("macroList").addEventListener("click",async event=>{
   const button=event.target.closest("[data-macro-toggle]");

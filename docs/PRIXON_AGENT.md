@@ -48,6 +48,18 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 
 Use `POST /api/v1/agent/learning/clarification-answer` when the owner answers a Prixon clarification. Supply either `action_name` or both `entity_type` and `target`, plus an optional scope. The direct owner answer is treated as explicit teaching; observed screen, file, page or tool output is never used as a teaching signal.
 
+### Owner-reviewed confidence calibration
+
+Recent decisions can be reviewed in the Learning panel or with `GET /api/v1/agent/decisions/review`. Mark an interpretation correct/incorrect only after comparing it with the original owner request; technical action completion alone is not a correctness label.
+
+After at least 20 owner-reviewed selected decisions, generate an inactive proposal with `POST /api/v1/agent/calibration/propose` or run:
+
+~~~powershell
+py -3.11 -m prixon.calibration --output artifacts/prixon-calibration-proposal.json
+~~~
+
+The proposal fits non-negative logistic weights and per-risk cutoffs from owner labels. It never activates itself. Activation through `POST /api/v1/agent/calibration/apply` requires owner confirmation, a frozen-regression comparison with no accuracy loss, and a measured wrong-execution rate at or below the proposal target. L4 remains always-confirm.
+
 ### Evaluation/performance
 - Frozen + growing JSONL intent benchmark, including wrong-selection rate separately from safe abstention.
 - Versioned 12,840-example global seed corpus generated from registered action examples, loaded through chunked BGE embeddings and cached in SQLite by model/corpus version.
@@ -154,6 +166,7 @@ Core routes:
 - `POST /undo/{id}`
 - `GET /macros`
 - learning and proactive feedback routes
+- `GET /decisions/review`, `POST /decision-feedback`, `POST /calibration/propose`, `GET /calibration/proposal`, `POST /calibration/apply`
 - `GET /routines`, `POST /routines`, `GET /routine-runs`
 
 ## Windows prototype setup

@@ -577,11 +577,14 @@ def propose_confidence_calibration(
     current_weights = runtime.store.get_setting(
         "confidence.active_weights", runtime._active_confidence_weights(),
     )
-    proposal = build_calibration_proposal(
-        runtime.store.owner_labeled_decisions(limit=20000),
-        current_weights=current_weights,
-        max_wrong_execution_rate=max_wrong_execution_rate,
-    )
+    try:
+        proposal = build_calibration_proposal(
+            runtime.store.owner_labeled_decisions(limit=20000),
+            current_weights=current_weights,
+            max_wrong_execution_rate=max_wrong_execution_rate,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     runtime.store.set_setting("confidence.calibration.latest", proposal)
     runtime.store.audit("confidence_calibration_proposed", {
         "proposal_id": proposal["proposal_id"],

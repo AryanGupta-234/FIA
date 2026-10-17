@@ -132,7 +132,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Trigger cooldowns, annoyance score, accepted/dismissed feedback and interruption cap
 - [x] Repeated plan-shape grouping, parameterized macro proposals and explicit approval/revocation
 - [x] Offline logistic confidence-weight fitting helper
-- [ ] Compare frozen-set wrong-execution before/after; only then deploy calibrated weights/thresholds
+- [ ] Compare frozen-set wrong-execution before/after on the Windows target environment; only then allow the owner to activate calibrated weights/thresholds
 
 #### Phase 9 — Optional research extensions
 - [ ] LoRA using only reviewed labels and frozen-set evidence
