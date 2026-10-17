@@ -49,6 +49,9 @@ dev = [
 where = ["."]
 include = ["fia*", "prixon*"]
 
+[tool.setuptools.package-data]
+prixon = ["data/*.jsonl"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
