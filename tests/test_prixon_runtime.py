@@ -377,3 +377,63 @@ def test_active_goals_are_marked_interrupted_not_replayed(store):
         assert store.goals(("blocked",))[0]["id"] == goal_id
     finally:
         runtime.executor.shutdown()
+
+
+def test_executor_falls_back_from_native_to_ui_automation_and_verifies(tmp_path):
+    class FakeAdapters:
+        def capture_before(self, action, args):
+            return {"hwnd": args["hwnd"], "iconic": False, "zoomed": False}
+
+        def execute_tier(self, action, args, tier):
+            if tier == "native_api":
+                return {"hwnd": args["hwnd"], "iconic": False, "zoomed": False}
+            if tier == "ui_automation":
+                return {"hwnd": args["hwnd"], "iconic": False, "zoomed": True}
+            raise AssertionError(f"Unexpected tier: {tier}")
+
+        def undo(self, action, args, before, output):
+            return True
+
+    store = AgentStore(tmp_path / "fallback.sqlite3")
+    registry = ActionRegistry()
+    executor = ActionExecutor(
+        registry, store, adapters=FakeAdapters(), kill_switch=KillSwitch(),
+    )
+    try:
+        result = executor.execute_action(
+            "window.maximize", {"window": "Editor", "hwnd": 1001}, confidence=1.0,
+        )
+        assert result.success
+        assert result.verified
+        assert result.output["automation_tier"] == "ui_automation"
+    finally:
+        executor.shutdown()
+
+
+def test_executor_does_not_continue_fallback_after_timeout(tmp_path):
+    class FakeAdapters:
+        def capture_before(self, action, args):
+            return {}
+
+        def execute_tier(self, action, args, tier):
+            raise TimeoutError("simulate worker timeout")
+
+        def undo(self, action, args, before, output):
+            return False
+
+    from prixon.executor import ExecutionBudget
+
+    store = AgentStore(tmp_path / "fallback-timeout.sqlite3")
+    executor = ActionExecutor(
+        ActionRegistry(), store, adapters=FakeAdapters(), kill_switch=KillSwitch(),
+        budget=ExecutionBudget(step_timeout_seconds=0.01),
+    )
+    try:
+        result = executor.execute_action(
+            "window.maximize", {"window": "Editor", "hwnd": 1001}, confidence=1.0,
+        )
+        assert not result.success
+        assert result.error is not None
+        assert "timeout" in result.error
+    finally:
+        executor.shutdown()
