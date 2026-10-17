@@ -23,6 +23,7 @@ class FastEmbedAdapter:
             raise RuntimeError(
                 "Semantic retrieval requires installing the optional semantic dependency."
             ) from exc
+        self.model_name = model_name
         self._model = TextEmbedding(model_name=model_name)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -87,14 +88,33 @@ class SemanticRetriever:
 
         self._examples: list[tuple[str, str, list[float]]] = []
         self._user_example_keys: set[tuple[str, str]] = set()
+        model_name = str(getattr(embedder, "model_name", type(embedder).__name__))
+        corpus_version = "global_seed_v1"
+        cached = (
+            self.store.cached_seed_embeddings(model_name, corpus_version)
+            if self.store is not None else {}
+        )
+        missing: list[tuple[str, str]] = []
+        for action_name, phrase in examples:
+            vector = cached.get((action_name, phrase))
+            if vector is None:
+                missing.append((action_name, phrase))
+            else:
+                self._examples.append((action_name, phrase, vector))
+        self.seed_embedding_cache_hits = len(examples) - len(missing)
+        self.seed_embedding_cache_misses = len(missing)
+
         batch_size = 256
-        for start in range(0, len(examples), batch_size):
-            batch = examples[start:start + batch_size]
+        for start in range(0, len(missing), batch_size):
+            batch = missing[start:start + batch_size]
             vectors = embedder.embed([phrase for _, phrase in batch])
-            self._examples.extend(
+            encoded = [
                 (name, phrase, vector)
                 for (name, phrase), vector in zip(batch, vectors, strict=True)
-            )
+            ]
+            self._examples.extend(encoded)
+            if self.store is not None:
+                self.store.cache_seed_embeddings(model_name, corpus_version, encoded)
 
         if self.store is not None:
             for row in self.store.semantic_examples():
