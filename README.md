@@ -78,11 +78,11 @@ Implemented on the feature/prixon-agent-foundation branch:
 - Optional local Vosk voice kill via Ctrl+Alt+V; push-to-listen only, with no always-on microphone or cloud speech service.
 - Bounded plans, allowlisted Win32/Settings URI adapters, postcondition checks, undo journal and a global Ctrl+Alt+Pause kill switch.
 - Persistent goals and event/audit stores; process, window, Downloads/Documents/Desktop, battery and scheduled-routine events; local-time schedules remain suggestion-only.
-- Native Win32 first, UI Automation and verified keyboard fallback for registered window controls, undo journal and bounded single-step failure replan.
+- Native Win32 first, tier-2 Windows media-session controls, UI Automation and verified keyboard fallback for registered window controls, undo journal and bounded failure recovery.
 - Owner-approved promotion digest for language candidates, plus explicit macro proposals and approval.
 - A 315-case frozen/growing intent corpus with per-case and per-class metrics.
 - API routes under /api/v1/agent; local Ollama only, no hosted fallback.
 
-Execution is available only through explicit API requests or explicit goals. Background proactive and scheduled-routine behavior is suggestion-only. L4 actions always require confirmation. Semantic retrieval is optional and disabled by default until installed and enabled. Clipboard text access requires L4 confirmation. Voice kill is opt-in and loads only a local speech model.
+Execution is available only through explicit API requests or explicit goals. Background proactive and scheduled-routine behavior is suggestion-only. L4 actions always require confirmation. Semantic retrieval is optional and disabled by default until installed and enabled. Clipboard text access requires L4 confirmation. Voice kill is opt-in and loads only a local speech model. Optional media-session support installs with `.[windows,media]`.
 
 See docs/PRIXON_AGENT.md for setup, API endpoints, safeguards, phase status and current limitations.

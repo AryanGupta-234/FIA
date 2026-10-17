@@ -59,7 +59,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 
 ### P3 — Safe execution
 - [x] Plan preconditions and execution budgets
-- [x] Windows allowlisted adapters, observable verification and retries
+- [x] Windows allowlisted native Win32/URI adapters, tier-2 Windows media-session control, UIA/keyboard fallback, observable verification and retries
 - [x] Undo journal, append-only audit and kill switch
 
 ### P4 — Learning and autonomy
@@ -82,7 +82,7 @@ FIA remains research-only. Purchase and checkout automation are intentionally ou
 - [x] Expand examples for status/settings/window/app-running look-alikes
 
 #### Phase 2 — Perception and grounding
-- [x] Process/window observation, Start Menu application catalogue, foreground context and short-lived references
+- [x] Process/window observation, bounded open-window inventory, Start Menu application catalogue, foreground context and short-lived references
 - [x] Deterministic CPU, RAM, battery, Wi-Fi, audio, network and process queries
 - [x] Fuzzy and contextual entity index; recent-file metadata from bounded known folders
 - [x] File change observation in Downloads, Documents and Desktop

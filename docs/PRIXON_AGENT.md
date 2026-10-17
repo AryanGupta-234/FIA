@@ -25,7 +25,8 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 ### Safe execution
 - Typed action contracts with slots, preconditions, postconditions, undo support, risk and automation tiers.
 - Plan validation at planner and executor boundaries.
-- Native Windows adapters without model-generated shell/script/PowerShell.
+- Native Win32/Settings URI adapters plus a tier-2 Windows media-session adapter (play, pause, stop, next, previous, status); no song titles or artist metadata are read.
+- UI Automation summaries are bounded to actionable roles/names/automation IDs, cached per HWND, and invalidated on window lifecycle/focus events.
 - Step, wall-clock, model-token and action-rate budgets. Ollama generation tokens are charged against one per-request budget shared by arbitration, self-consistency, compound planning and failure reflection; partial compound recovery inherits the original wall-clock deadline.
 - Postcondition verification and deterministic prediction-error logging.
 - Retry once, then constrained failure reflection/replan, then escalation.
@@ -51,7 +52,7 @@ This document tracks the implementation of the Prixon autonomous Windows-agent p
 Run from the repository root on the Windows device with Prixon configured and the local Ollama model already pulled:
 
 ~~~powershell
-py -3.11 -m pip install -e ".[dev,windows]"
+py -3.11 -m pip install -e ".[dev,windows,media]"
 py -3.11 -m prixon.benchmark --split all --output artifacts/prixon-benchmark-latest.json
 ~~~
 
@@ -65,6 +66,18 @@ This benchmark calls the preview/decision path only; it does not execute Windows
 - No browser credentials, cookies or password fields are collected.
 - Clipboard text is fetched only for a direct owner request after L4 confirmation; it is returned to the requester but never written to audit, episode or persistent goal records. Sensitive clipboard actions are blocked from background goals and macro promotion.
 - Vision/OCR and app-specific adapters remain future automation tiers.
+
+## Windows media controls (tier 2)
+
+Media actions use the Windows Global System Media Transport Controls session API. The adapter requests only the playback state and app user-model id; it deliberately does not request track title, artist, album, browser URLs or page content.
+
+Install the optional package with:
+
+~~~powershell
+py -3.11 -m pip install -e ".[windows,media]"
+~~~
+
+Available actions include `media.status`, `media.play`, `media.pause`, `media.stop`, `media.skip_next` and `media.skip_previous`. A target app can be supplied when an active media session for that app exists; otherwise Prixon uses the Windows current media session.
 
 ## Optional local voice kill
 
