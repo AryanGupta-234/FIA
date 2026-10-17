@@ -124,29 +124,54 @@ class WindowsActionAdapters:
             before_pids = set(psutil.pids())
             os.startfile(target)  # type: ignore[attr-defined]
             time.sleep(0.5)
-            new_pids = sorted(set(psutil.pids()) - before_pids)
             selected_pid = None
             app_name = str(args.get("application") or "").casefold()
-            for pid in new_pids:
-                try:
-                    name = psutil.Process(pid).name().casefold()
-                    if app_name and app_name.split()[0] in name:
-                        selected_pid = pid
-                        break
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+            process_hints = {
+                "paint": ("mspaint.exe",),
+                "calculator": ("calculatorapp.exe", "calc.exe"),
+                "microsoft edge": ("msedge.exe",),
+                "edge": ("msedge.exe",),
+                "google chrome": ("chrome.exe",),
+                "chrome": ("chrome.exe",),
+                "brave": ("brave.exe",),
+                "visual studio code": ("code.exe",),
+                "vs code": ("code.exe",),
+                "spotify": ("spotify.exe",),
+                "discord": ("discord.exe",),
+            }
+            hints = process_hints.get(app_name, (app_name.split()[0] + ".exe",))
             foreground = None
             deadline = time.monotonic() + 5.0
-            while time.monotonic() < deadline:
+            while time.monotonic() < deadline and selected_pid is None:
                 foreground = self.perception._foreground_window()
-                if foreground and selected_pid and foreground.get("pid") == selected_pid:
-                    break
-                time.sleep(0.2)
+                candidates = sorted(set(psutil.pids()) - before_pids)
+                for pid in candidates:
+                    try:
+                        process_name = psutil.Process(pid).name().casefold()
+                        if any(hint in process_name for hint in hints):
+                            selected_pid = pid
+                            break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                if (
+                    selected_pid is None and foreground and not foreground.get("sensitive")
+                    and foreground.get("pid")
+                ):
+                    try:
+                        foreground_name = psutil.Process(int(foreground["pid"])).name().casefold()
+                        if any(hint in foreground_name for hint in hints):
+                            selected_pid = int(foreground["pid"])
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                if selected_pid is None:
+                    time.sleep(0.2)
+            if foreground and foreground.get("sensitive"):
+                foreground = None
             return {
                 "launched": target, "application": args.get("application"),
                 "pid": selected_pid,
-                "hwnd": foreground.get("handle") if foreground and selected_pid and foreground.get("pid") == selected_pid else None,
-                "window": foreground.get("title") if foreground and selected_pid and foreground.get("pid") == selected_pid else None,
+                "hwnd": foreground.get("handle") if foreground and not foreground.get("sensitive") and selected_pid and foreground.get("pid") == selected_pid else None,
+                "window": foreground.get("title") if foreground and not foreground.get("sensitive") and selected_pid and foreground.get("pid") == selected_pid else None,
             }
         if action in {"window.minimize", "window.maximize", "window.restore"}:
             self._require_windows()
