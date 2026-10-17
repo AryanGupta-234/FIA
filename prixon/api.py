@@ -21,6 +21,8 @@ from prixon.schemas import (
     MacroRunRequest,
     ProactiveFeedbackRequest,
     ResetLearningRequest,
+    RoutineCreateRequest,
+    RoutineStatusRequest,
     RiskTier,
     RunRequest,
     TeachAliasRequest,
@@ -373,3 +375,53 @@ def model_metrics() -> dict[str, Any]:
         "mode": "local_only",
         "last_call": runtime.ollama.last_metrics,
     }
+
+
+@router.get("/routines")
+def list_routines(enabled: bool | None = None) -> list[dict[str, Any]]:
+    return runtime.store.routines(enabled)
+
+
+@router.post("/routines", status_code=201)
+def create_routine(payload: RoutineCreateRequest) -> dict[str, Any]:
+    macro = next(
+        (item for item in runtime.store.macros(approved=True) if item["id"] == payload.macro_id),
+        None,
+    )
+    if macro is None:
+        raise HTTPException(404, "Only an owner-approved macro can be scheduled.")
+    try:
+        routine_id = runtime.store.create_routine(
+            payload.name, payload.macro_id, payload.time_local, payload.weekdays,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    runtime.store.audit("routine_created", {
+        "routine_id": routine_id, "macro_id": payload.macro_id,
+        "time_local": payload.time_local, "weekdays": payload.weekdays,
+    })
+    return {
+        "id": routine_id, "status": "scheduled",
+        "timezone": "system_local", "time_local": payload.time_local,
+        "weekdays": payload.weekdays,
+        "execution": "suggestion_only",
+    }
+
+
+@router.post("/routines/{routine_id}/status")
+def set_routine_status(routine_id: int, payload: RoutineStatusRequest) -> dict[str, Any]:
+    changed = runtime.store.set_routine_enabled(routine_id, payload.enabled)
+    if not changed:
+        raise HTTPException(404, "Routine not found.")
+    runtime.store.audit("routine_status_changed", {
+        "routine_id": routine_id, "enabled": payload.enabled,
+    })
+    return {"id": routine_id, "enabled": payload.enabled}
+
+
+@router.delete("/routines/{routine_id}")
+def delete_routine(routine_id: int) -> dict[str, Any]:
+    if not runtime.store.delete_routine(routine_id):
+        raise HTTPException(404, "Routine not found.")
+    runtime.store.audit("routine_deleted", {"routine_id": routine_id})
+    return {"status": "deleted", "id": routine_id}
