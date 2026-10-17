@@ -12,7 +12,7 @@ from prixon.confidence import (
 )
 from prixon.entities import EntityIndex, ReferenceResolver
 from prixon.events import EventBus
-from prixon.executor import ActionExecutor
+from prixon.executor import ActionExecutor, ExecutionBudget
 from prixon.governance import decide
 from prixon.kill_switch import KillSwitch
 from prixon.learning import OwnerLexicon
@@ -155,6 +155,34 @@ def test_action_executor_blocks_l4_before_calling_windows_adapter(store):
         )
         assert not result.success
         assert result.error == "explicit_confirmation_required"
+    finally:
+        executor.shutdown()
+
+
+def test_action_executor_rate_limit_uses_a_sliding_window(store):
+    class FakeAdapters:
+        def __init__(self):
+            self.calls = 0
+
+        def capture_before(self, action, args):
+            return {}
+
+        def execute_tier(self, action, args, tier):
+            self.calls += 1
+            return {"cpu_percent": 5}
+
+    adapters = FakeAdapters()
+    executor = ActionExecutor(
+        ActionRegistry(), store, adapters=adapters, kill_switch=KillSwitch(),
+        budget=ExecutionBudget(max_actions_per_minute=1),
+    )
+    try:
+        first = executor.execute_action("system.status", {}, confidence=1.0)
+        second = executor.execute_action("system.status", {}, confidence=1.0)
+        assert first.success and first.verified
+        assert not second.success
+        assert second.error == "action_rate_limit_exceeded"
+        assert adapters.calls == 1
     finally:
         executor.shutdown()
 
@@ -573,6 +601,18 @@ def test_run_endpoint_preview_never_executes_read_only_action(tmp_path):
         assert result["status"] == "selected"
         assert result["plan"]["steps"][0]["tool"] == "system.battery"
         assert called == []
+        decisions = [
+            row for row in store.audit_rows()
+            if row["event_type"] == "decision_made"
+        ]
+        assert len(decisions) == 1
+        payload = decisions[0]["payload"]
+        assert payload["action"] == "system.battery"
+        assert payload["confidence_signals"] == result["confidence_signals"]
+        assert set(payload["confidence_signals"]) == {
+            "retrieval_margin", "slot_grounding", "llm_confidence",
+            "context_prior", "user_lexicon_hit",
+        }
     finally:
         runtime.executor.shutdown()
 

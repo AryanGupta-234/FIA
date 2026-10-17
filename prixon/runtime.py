@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from prixon.confidence import DecisionSignals, fuse_confidence, meets_risk_threshold
+from prixon.confidence import DEFAULT_WEIGHTS, DecisionSignals, fuse_confidence, meets_risk_threshold
 from prixon.config import PrixonSettings
 from prixon.embeddings import FastEmbedAdapter, SemanticRetriever
 from prixon.entities import EntityIndex, ReferenceResolver
@@ -360,6 +360,24 @@ class AgentRuntime:
             for action in actions
         ]
 
+    def _record_decision(
+        self, *, utterance: str, status: str, intent_class: str | None,
+        action: str | None, confidence: float, risk: str | None, reason: str,
+        confidence_signals: dict[str, float] | None, candidate_actions: list[str],
+    ) -> None:
+        self.store.audit("decision_made", {
+            "utterance": utterance,
+            "status": status,
+            "intent_class": intent_class,
+            "action": action,
+            "confidence": confidence,
+            "risk": risk,
+            "reason": reason,
+            "confidence_signals": confidence_signals,
+            "confidence_weights": dict(DEFAULT_WEIGHTS) if confidence_signals is not None else None,
+            "candidate_actions": candidate_actions,
+        })
+
     async def preview(
         self, text: str, *, trusted_args: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -407,6 +425,13 @@ class AgentRuntime:
                     if action:
                         confidence_hint = float(arbitration.get("confidence", 0))
                         if arbitration.get("clarification"):
+                            self._record_decision(
+                                utterance=text, status="clarify",
+                                intent_class=route.intent_class.value if route.intent_class else None,
+                                action=None, confidence=0.0, risk=None,
+                                reason="model_requested_clarification", confidence_signals=None,
+                                candidate_actions=[candidate.action.name for candidate in route.candidates],
+                            )
                             return {
                                 "status": "clarify",
                                 "reason": "model_requested_clarification",
@@ -419,6 +444,14 @@ class AgentRuntime:
                                 temperature=0.1,
                             )
                             if second.get("clarification") or second.get("action") != arbitration.get("action"):
+                                self._record_decision(
+                                    utterance=text, status="clarify",
+                                    intent_class=route.intent_class.value if route.intent_class else None,
+                                    action=None, confidence=0.0, risk=None,
+                                    reason="low_confidence_self_consistency_disagreement",
+                                    confidence_signals=None,
+                                    candidate_actions=[candidate.action.name for candidate in route.candidates],
+                                )
                                 return {
                                     "status": "clarify",
                                     "reason": "low_confidence_self_consistency_disagreement",
@@ -438,6 +471,13 @@ class AgentRuntime:
 
         action = self.registry.get(route.selected_action) if route.selected_action else None
         if not action:
+            self._record_decision(
+                utterance=text, status=route.status,
+                intent_class=route.intent_class.value if route.intent_class else None,
+                action=None, confidence=float(route.confidence), risk=None,
+                reason=route.reason, confidence_signals=None,
+                candidate_actions=[candidate.action.name for candidate in route.candidates],
+            )
             return {
                 "status": route.status, "intent_class": route.intent_class.value if route.intent_class else None,
                 "action": None, "args": {}, "confidence": route.confidence,
@@ -465,16 +505,26 @@ class AgentRuntime:
         )
         llm_score = float(arbitration.get("confidence", 0)) if arbitration else 0.0
         foreground = self.situation().get("foreground_app")
-        confidence = fuse_confidence(DecisionSignals(
-            retrieval_margin=margin,
-            slot_grounding=slot_score,
-            llm_confidence=llm_score,
-            context_prior=1.0 if foreground else 0.5,
-            user_lexicon_hit=1.0 if alias_used else 0.0,
-        ))
+        signal_values = {
+            "retrieval_margin": margin,
+            "slot_grounding": slot_score,
+            "llm_confidence": llm_score,
+            "context_prior": 1.0 if foreground else 0.5,
+            "user_lexicon_hit": 1.0 if alias_used else 0.0,
+        }
+        confidence = fuse_confidence(DecisionSignals(**signal_values))
+        self._record_decision(
+            utterance=text, status=route.status,
+            intent_class=route.intent_class.value if route.intent_class else None,
+            action=action.name, confidence=confidence, risk=action.risk.value,
+            reason=route.reason, confidence_signals=signal_values,
+            candidate_actions=[candidate.action.name for candidate in route.candidates],
+        )
         return {
             "status": route.status, "intent_class": route.intent_class.value if route.intent_class else None,
             "action": action.name, "args": args, "confidence": confidence,
+            "confidence_signals": signal_values,
+            "confidence_weights": dict(DEFAULT_WEIGHTS),
             "risk": action.risk.value,
             "requires_confirmation": action.risk == RiskTier.ALWAYS_CONFIRM,
             "execution_allowed_by_threshold": meets_risk_threshold(confidence, action.risk.value),

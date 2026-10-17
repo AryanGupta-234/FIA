@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import threading
 import time
 import uuid
 from collections import deque
@@ -27,7 +28,6 @@ class ExecutionBudget:
     max_model_tokens: int = 1024
     step_timeout_seconds: float = 12.0
     max_actions_per_minute: int = 20
-    max_actions_per_minute: int = 30
 
 
 @dataclass
@@ -454,8 +454,8 @@ class ActionExecutor:
         self.budget = budget or ExecutionBudget()
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="PrixonAction")
         self._seen_steps: dict[str, int] = {}
-        self._action_times: list[float] = []
         self._action_times: deque[float] = deque()
+        self._rate_lock = threading.Lock()
 
     def execute_action(
         self, action_name: str, args: dict[str, Any], *,
@@ -467,16 +467,6 @@ class ActionExecutor:
             return ActionResult(False, action_name, error="unknown_action")
         if self.kill_switch and self.kill_switch.active:
             return ActionResult(False, action_name, error="kill_switch_active")
-        now = time.monotonic()
-        self._action_times = [stamp for stamp in self._action_times if now - stamp < 60]
-        if len(self._action_times) >= self.budget.max_actions_per_minute:
-            return ActionResult(False, action_name, error="action_rate_limit_exceeded")
-        now = time.monotonic()
-        while self._action_times and now - self._action_times[0] >= 60:
-            self._action_times.popleft()
-        if len(self._action_times) >= self.budget.max_actions_per_minute:
-            return ActionResult(False, action_name, error="action_rate_limit_exceeded")
-        self._action_times.append(now)
         if any(key in args for key in ("command", "shell", "script", "powershell")):
             return ActionResult(False, action_name, error="arbitrary_command_arguments_rejected")
         for slot in action.required_slots:
@@ -495,6 +485,15 @@ class ActionExecutor:
             return ActionResult(False, action_name, error="confidence_below_risk_threshold")
         if action.risk != RiskTier.READ_ONLY and not action.undo_supported and action.risk != RiskTier.ALWAYS_CONFIRM:
             return ActionResult(False, action_name, error="state_change_without_undo_recipe_blocked")
+
+        # Reserve one request slot atomically; all fallback tiers for this action share it.
+        with self._rate_lock:
+            now = time.monotonic()
+            while self._action_times and now - self._action_times[0] >= 60:
+                self._action_times.popleft()
+            if len(self._action_times) >= self.budget.max_actions_per_minute:
+                return ActionResult(False, action_name, error="action_rate_limit_exceeded")
+            self._action_times.append(now)
 
         try:
             before = self.adapters.capture_before(action_name, args)
