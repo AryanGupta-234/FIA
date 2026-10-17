@@ -29,8 +29,11 @@ class MacroPromoter:
             }
             dependencies = step.get("depends_on", [])
             previous_tool = plan.get("steps", [])[index - 1].get("tool") if index > 0 else None
-            creates_window = previous_tool in {"app.launch", "settings.open"}
-            if action and action.target_type == "window" and creates_window:
+            previous_action = self.registry.get(previous_tool) if previous_tool else None
+            previous_preserves_window = previous_tool in {"app.launch", "settings.open"} or (
+                previous_action is not None and previous_action.target_type == "window"
+            )
+            if action and action.target_type == "window" and previous_preserves_window:
                 safe_args = {"window": "$previous.window", "hwnd": "$previous.hwnd"}
                 dependencies = sorted(set(dependencies + [index - 1]))
             steps.append({
