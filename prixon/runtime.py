@@ -690,8 +690,11 @@ class AgentRuntime:
                 continue
             previous = " ".join(pending["phrase"].casefold().split())
             similarity = SequenceMatcher(None, previous, normalized).ratio()
-            is_correction = normalized.startswith(("no ", "not ", "stop ", "undo "))
-            if is_correction or (previous != normalized and similarity >= 0.45):
+            is_correction = normalized.startswith((
+                "no ", "not ", "stop ", "undo ", "actually ", "i meant ",
+                "i said ", "wrong ", "not that ", "that's not ",
+            )) or " i meant " in normalized
+            if is_correction:
                 discarded += self.store.discard_pending_learning(signal_id=pending["id"])
                 if is_correction:
                     self.store.add_negative_example(pending["phrase"], pending["action_name"])
@@ -794,6 +797,14 @@ class AgentRuntime:
         except Exception as exc:
             success, error = False, f"{type(exc).__name__}:{exc}"
         self.store.finish_undo(undo_id, "undone" if success else "failed")
+        # Requesting an undo is negative owner feedback even if the OS rejected rollback.
         self.store.discard_pending_learning(undo_id=undo_id)
+        action = self.registry.get(record["action_name"])
+        if action and record.get("utterance"):
+            self.lexicon.observe(
+                record["utterance"], record["action_name"], success=False,
+                session_id=record.get("session_id", "local-session"),
+                risk=action.risk, explicit=False,
+            )
         self.store.audit("undo_attempted", {"undo_id": undo_id, "success": success, "error": error})
         return {"status": "undone" if success else "failed", "error": error}
