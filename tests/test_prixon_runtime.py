@@ -471,3 +471,26 @@ def test_wmi_process_stop_classifier_marks_nonzero_exit_as_crash():
     assert payload["unexpected"] is True
     normal_type, _ = WinProcessTerminationObserver.classify_stop("app.exe", 42, 0)
     assert normal_type == "process_stopped"
+
+
+def test_router_routes_system_telemetry_queries_separately_from_settings():
+    router = IntentRouter(ActionRegistry())
+    assert router.route("is wifi connected").selected_action == "system.wifi"
+    assert router.route("check battery").selected_action == "system.battery"
+    assert router.route("check volume").selected_action == "system.audio"
+    assert router.route("set volume to 30").selected_action == "volume.set"
+
+
+def test_implicit_learning_waits_for_owner_approval(tmp_path):
+    store = AgentStore(tmp_path / "owner-approval.sqlite3")
+    lexicon = OwnerLexicon(store)
+    for session in ("one", "two", "three", "one", "two"):
+        result = lexicon.observe(
+            "fire up", "app.launch", success=True,
+            session_id=session, risk=RiskTier.REVERSIBLE,
+        )
+    assert result.status == "promotion_ready"
+    assert lexicon.lookup("fire up") is None
+    approved = lexicon.approve_candidate("fire up", "app.launch", RiskTier.REVERSIBLE)
+    assert approved.status == "promoted"
+    assert lexicon.lookup("fire up")["explicit"] is True
