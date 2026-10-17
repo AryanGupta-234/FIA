@@ -34,6 +34,9 @@ windows = [
 media = [
   "winrt-Windows.Media.Control>=3.2.1,<4.0; platform_system == 'Windows'",
 ]
+browser = [
+  "websockets>=12.0,<16.0; platform_system == 'Windows'",
+]
 voice = [
   "vosk>=0.3.45,<1.0; platform_system == 'Windows'",
   "sounddevice>=0.4.6,<1.0; platform_system == 'Windows'",
