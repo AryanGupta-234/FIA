@@ -8,7 +8,10 @@ from typing import Any
 
 from prixon.consolidation import MacroPromoter
 from prixon.events import (
-    EventBus, FileSystemEventObserver, ProcessDeltaObserver, WinEventObserver,
+    EventBus,
+    FileSystemEventObserver,
+    ProcessDeltaObserver,
+    WinEventObserver,
 )
 from prixon.kill_switch import GlobalHotkey
 from prixon.schemas import AgentPlan
